@@ -1,0 +1,84 @@
+name: iOS CI/CD Build
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'   # BUG FIX: was '3.22.0' (EOL/outdated); use latest stable
+          channel: 'stable'
+          cache: true
+
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Install iOS dependencies
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Analyze project
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build iOS App
+        run: flutter build ios --release --no-codesign
+
+      # ─────────────────────────────────────────────────────────────────
+      # BUG FIX: Original IPA creation had a path bug.
+      #
+      # Original: mkdir -p build/ios/ipa (run from root)
+      #           cd build/ios/iphoneos
+      #           zip -r ../../ipa/CrystalCascade.ipa ...
+      #           ^^^ ../../ from build/ios/iphoneos = build/
+      #           So zip wrote to build/ipa/ — NOT build/ios/ipa/
+      #           The mkdir and zip targeted DIFFERENT directories!
+      #
+      # Fix: use ../ipa/ (one level up from iphoneos = build/ios/ipa)
+      # ─────────────────────────────────────────────────────────────────
+      - name: Create IPA
+        run: |
+          mkdir -p build/ios/ipa
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r ../ipa/CrystalCascade.ipa Payload
+          rm -rf Payload
+
+      - name: Upload iOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: build/ios/ipa/*.ipa
+          retention-days: 30
+
+      - name: Create Release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/ios/ipa/*.ipa
+          tag_name: ios-v${{ github.run_number }}
+          name: iOS Release v${{ github.run_number }}
+          body: |
+            Crystal Cascade - iOS Release
+            - IPA for TestFlight / direct installation
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
