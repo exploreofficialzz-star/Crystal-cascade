@@ -14,9 +14,50 @@ class AudioService {
 
   Future<void> init() async {
     if (_initialized) return;
+
+    // ── BGM player: loop forever, allow mixing with other audio ──────────────
+    // AudioContextConfig.mixWithOthers = true means this player does NOT steal
+    // audio focus from other players — SFX and BGM coexist peacefully.
+    await _bgmPlayer.setAudioContext(
+      AudioContext(
+        android: const AudioContextAndroid(
+          contentType: AndroidContentType.music,
+          usageType: AndroidUsageType.game,
+          // GAIN_TRANSIENT_MAY_DUCK: BGM stays playing, just ducks briefly for SFX
+          audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+          isSpeakerphoneOn: false,
+          stayAwake: false,
+        ),
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.ambient,
+          // mixWithOthers: BGM won't interrupt other app audio and vice versa
+          options: const {AVAudioSessionOptions.mixWithOthers},
+        ),
+      ),
+    );
+
+    // ── SFX player: short sounds, must NOT steal focus from BGM ──────────────
+    await _sfxPlayer.setAudioContext(
+      AudioContext(
+        android: const AudioContextAndroid(
+          contentType: AndroidContentType.sonification,
+          usageType: AndroidUsageType.game,
+          // GAIN_TRANSIENT: takes focus very briefly then releases it back to BGM
+          audioFocus: AndroidAudioFocus.gainTransient,
+          isSpeakerphoneOn: false,
+          stayAwake: false,
+        ),
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.ambient,
+          options: const {AVAudioSessionOptions.mixWithOthers},
+        ),
+      ),
+    );
+
     await _bgmPlayer.setReleaseMode(ReleaseMode.loop);
     await _bgmPlayer.setVolume(0.4);
     await _sfxPlayer.setVolume(1.0);
+
     _initialized = true;
   }
 
