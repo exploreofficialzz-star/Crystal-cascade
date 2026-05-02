@@ -1,0 +1,22 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    missing_required_param: error
+    missing_return: error
+    invalid_assignment: warning
+    const_constructor_with_non_final_field: warning
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_final_fields: true
+    prefer_final_locals: true
+    avoid_print: true
+    avoid_unnecessary_containers: true
+    use_key_in_widget_constructors: true
+    always_specify_types: false
+    prefer_single_quotes: true
+    avoid_redundant_argument_values: true
+    sort_child_properties_last: true
