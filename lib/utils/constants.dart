@@ -26,7 +26,6 @@ class GameConstants {
   static const Duration matchFlashDuration = Duration(milliseconds: 200);
   static const Duration particleDuration = Duration(milliseconds: 800);
 
-  // Level Generation
   static List<Level> generateLevels() {
     final List<Level> levels = [];
 
@@ -39,33 +38,33 @@ class GameConstants {
 
       if (i <= 5) {
         tubesCount = 3;
-        tubeCapacity = 4;
+        tubeCapacity = 6;   // was 4
         colorsCount = 2;
-        gemsPerColor = 4;
+        gemsPerColor = 6;   // was 4
         maxMoves = 12;
       } else if (i <= 15) {
         tubesCount = 4;
-        tubeCapacity = 4;
+        tubeCapacity = 6;   // was 4
         colorsCount = 3;
-        gemsPerColor = 4;
+        gemsPerColor = 6;   // was 4
         maxMoves = 20;
       } else if (i <= 30) {
         tubesCount = 5;
-        tubeCapacity = 4;
+        tubeCapacity = 6;   // was 4
         colorsCount = 4;
-        gemsPerColor = 4;
+        gemsPerColor = 6;   // was 4
         maxMoves = 28;
       } else if (i <= 50) {
         tubesCount = 6;
-        tubeCapacity = 5;
+        tubeCapacity = 6;   // was 5
         colorsCount = 4;
-        gemsPerColor = 5;
+        gemsPerColor = 6;   // was 5
         maxMoves = 40;
       } else if (i <= 75) {
         tubesCount = 7;
-        tubeCapacity = 5;
+        tubeCapacity = 6;   // was 5
         colorsCount = 5;
-        gemsPerColor = 5;
+        gemsPerColor = 6;   // was 5
         maxMoves = 55;
       } else {
         tubesCount = 8;
