@@ -1,4 +1,3 @@
-import 'dart:math';
 import '../models/gem.dart';
 import '../models/level.dart';
 
@@ -30,7 +29,6 @@ class GameConstants {
   // Level Generation
   static List<Level> generateLevels() {
     final List<Level> levels = [];
-    final random = Random();
 
     for (int i = 1; i <= 100; i++) {
       int tubesCount;

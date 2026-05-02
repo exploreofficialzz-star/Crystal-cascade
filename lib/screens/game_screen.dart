@@ -37,15 +37,17 @@ class _GameScreenState extends State<GameScreen>
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (bool didPop) {
+        if (didPop) return;
         final game = context.read<GameProvider>();
         if (game.status == GameStatus.playing) {
           game.pauseGame();
           _showPauseMenu(context);
-          return false;
+        } else {
+          Navigator.of(context).pop();
         }
-        return true;
       },
       child: Scaffold(
         body: Consumer<GameProvider>(

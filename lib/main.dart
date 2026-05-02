@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'providers/game_provider.dart';
 import 'providers/settings_provider.dart';
 import 'screens/splash_screen.dart';
@@ -54,8 +53,7 @@ class CrystalCascadeApp extends StatelessWidget {
           colorScheme: const ColorScheme.dark(
             primary: Colors.purpleAccent,
             secondary: Colors.blueAccent,
-            surface: Color(0xFF16213e),
-            background: Color(0xFF1a1a2e),
+            surface: Color(0xFF1a1a2e),
           ),
           textTheme: const TextTheme(
             displayLarge: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),

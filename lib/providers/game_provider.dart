@@ -214,14 +214,14 @@ class GameProvider extends ChangeNotifier {
 
   void useHint() async {
     if (_status != GameStatus.playing || _currentLevel == null) return;
-    if (_hints <= 0) {
+    if (hints <= 0) {
       if (totalCoins >= GameConstants.hintCost) {
         await _storage.spendCoins(GameConstants.hintCost);
       } else {
         return;
       }
     } else {
-      await _storage.setHints(_hints - 1);
+      await _storage.setHints(hints - 1);
     }
 
     // Simple hint: select a tube with movable gem

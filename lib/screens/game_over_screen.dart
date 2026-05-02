@@ -40,7 +40,7 @@ class _GameOverScreenState extends State<GameOverScreen> {
       builder: (context, game, child) {
         final isWin = game.status == GameStatus.won;
 
-        if (isWin && !_confettiController.isPlaying) {
+        if (isWin && _confettiController.state != ConfettiControllerState.playing) {
           _confettiController.play();
         }
 

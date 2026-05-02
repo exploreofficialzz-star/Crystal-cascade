@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:shimmer/shimmer.dart';
 import '../providers/game_provider.dart';
 import '../services/admob_service.dart';
 import '../services/audio_service.dart';
-import '../utils/constants.dart';
 import '../widgets/ad_banner_widget.dart';
 
 class ShopScreen extends StatelessWidget {
