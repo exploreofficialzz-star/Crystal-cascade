@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
@@ -16,23 +17,60 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
+// FIX 1: Added WidgetsBindingObserver so BGM pauses/resumes with app lifecycle
+// instead of stopping permanently when the screen loses focus.
 class _GameScreenState extends State<GameScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pulseController;
+
+  // FIX 2: Subscription to AdMob reward stream so +5 moves actually applies
+  // after the rewarded ad finishes. Previously the dialog closed immediately
+  // without ever listening for the reward callback.
+  StreamSubscription<bool>? _rewardSubscription;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this); // for BGM lifecycle
+
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
+
+    // Wire up the ad reward → grant moves
+    _rewardSubscription = AdMobService().onRewardEarned.listen((_) {
+      if (!mounted) return;
+      context.read<GameProvider>().claimRewardMoves(5);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🎉 +5 moves added!'),
+          backgroundColor: Colors.greenAccent,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
+    _rewardSubscription?.cancel();
     super.dispose();
+  }
+
+  // FIX 1 continued: Resume/pause BGM when app goes background/foreground
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      AudioService().pauseBGM();
+    } else if (state == AppLifecycleState.resumed) {
+      final game = context.read<GameProvider>();
+      if (game.status == GameStatus.playing) {
+        AudioService().resumeBGM();
+      }
+    }
   }
 
   @override
@@ -79,16 +117,11 @@ class _GameScreenState extends State<GameScreen>
               child: SafeArea(
                 child: Column(
                   children: [
-                    // Top HUD
                     _buildTopHUD(game),
                     const SizedBox(height: 8),
                     const AdBannerWidget(),
                     const SizedBox(height: 8),
-                    // Game Area
-                    Expanded(
-                      child: _buildGameArea(game),
-                    ),
-                    // Bottom Controls
+                    Expanded(child: _buildGameArea(game)),
                     _buildBottomControls(game),
                     const SizedBox(height: 10),
                   ],
@@ -107,12 +140,10 @@ class _GameScreenState extends State<GameScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Back button
           _buildHUDButton(
             Icons.arrow_back_ios,
             () => _onBackPressed(context),
           ),
-          // Level & Moves
           Expanded(
             child: Column(
               children: [
@@ -158,7 +189,6 @@ class _GameScreenState extends State<GameScreen>
               ],
             ),
           ),
-          // Pause button
           _buildHUDButton(
             Icons.pause,
             () {
@@ -195,7 +225,6 @@ class _GameScreenState extends State<GameScreen>
     final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
 
     if (isPortrait) {
-      // Portrait: wrap tubes in rows
       return Center(
         child: Wrap(
           alignment: WrapAlignment.center,
@@ -214,7 +243,6 @@ class _GameScreenState extends State<GameScreen>
         ),
       );
     } else {
-      // Landscape: horizontal scroll
       return Center(
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
@@ -284,26 +312,15 @@ class _GameScreenState extends State<GameScreen>
             decoration: BoxDecoration(
               color: Colors.black.withOpacity(0.3),
               shape: BoxShape.circle,
-              border: Border.all(
-                color: color.withOpacity(0.5),
-                width: 1.5,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: color.withOpacity(0.2),
-                  blurRadius: 10,
-                ),
-              ],
+              border: Border.all(color: color.withOpacity(0.5), width: 1.5),
+              boxShadow: [BoxShadow(color: color.withOpacity(0.2), blurRadius: 10)],
             ),
             child: Icon(icon, color: color, size: 24),
           ),
           const SizedBox(height: 4),
           Text(
             label,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.7),
-              fontSize: 11,
-            ),
+            style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 11),
           ),
         ],
       ),
@@ -326,18 +343,21 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  // FIX 3 + FIX 4: Rewired extra moves dialog.
+  // - "Watch Video" now properly closes dialog BEFORE showing ad so the ad
+  //   has a clean context. The reward stream listener (in initState) applies
+  //   the moves once the ad completes.
+  // - "Use Coins" button now has a clear label with coin icon and shows
+  //   the cost explicitly.
   void _showExtraMovesDialog(BuildContext context) {
     final game = context.read<GameProvider>();
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1a1a2e),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
-          side: BorderSide(
-            color: Colors.purpleAccent.withOpacity(0.5),
-            width: 1,
-          ),
+          side: BorderSide(color: Colors.purpleAccent.withOpacity(0.5), width: 1),
         ),
         title: const Text(
           'Extra Moves',
@@ -347,51 +367,110 @@ class _GameScreenState extends State<GameScreen>
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.add_circle,
-              color: Colors.greenAccent,
-              size: 50,
-            ),
+            const Icon(Icons.add_circle, color: Colors.greenAccent, size: 56),
             const SizedBox(height: 16),
-            Text(
-              'Get +5 moves for ${GameConstants.extraMovesCost} coins?',
-              style: TextStyle(color: Colors.white.withOpacity(0.8)),
+            const Text(
+              '+5 Moves',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Watch a short video for free:',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
-            Text(
-              'Or watch a video for free!',
-              style: TextStyle(
-                color: Colors.amberAccent.withOpacity(0.8),
-                fontSize: 12,
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  // FIX 3: Close dialog first, then show ad. The reward listener
+                  // in initState will call claimRewardMoves(5) when ad finishes.
+                  AdMobService().showRewardedAd(type: 'extra_moves');
+                },
+                icon: const Icon(Icons.play_circle_outline, color: Colors.black),
+                label: const Text(
+                  'Watch Video',
+                  style: TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.amberAccent,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
               ),
-              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            const Row(
+              children: [
+                Expanded(child: Divider(color: Colors.white24)),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Text('OR', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                ),
+                Expanded(child: Divider(color: Colors.white24)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // FIX 4: This button was previously just labelled "Buy" with white
+            // text on a purple background — hard to read and no cost shown.
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  final success = await game.buyExtraMoves();
+                  if (!success) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Not enough coins! Watch a video instead.'),
+                        backgroundColor: Colors.redAccent,
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.monetization_on, color: Colors.white),
+                label: Text(
+                  'Use ${GameConstants.extraMovesCost} Coins',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.purple,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'You have ${game.totalCoins} coins',
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
             ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              AdMobService().showRewardedAd(type: 'extra_moves');
-              Navigator.pop(context);
-            },
-            child: const Text(
-              'Watch Video',
-              style: TextStyle(color: Colors.amberAccent),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              game.buyExtraMoves();
-              Navigator.pop(context);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.purpleAccent,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text('Buy'),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
           ),
         ],
       ),
@@ -405,10 +484,7 @@ class _GameScreenState extends State<GameScreen>
         backgroundColor: const Color(0xFF1a1a2e),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
-          side: BorderSide(
-            color: Colors.orangeAccent.withOpacity(0.5),
-            width: 1,
-          ),
+          side: BorderSide(color: Colors.orangeAccent.withOpacity(0.5), width: 1),
         ),
         title: const Text(
           'Restart Level?',
@@ -432,11 +508,9 @@ class _GameScreenState extends State<GameScreen>
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.orangeAccent,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
-            child: const Text('Restart'),
+            child: const Text('Restart', style: TextStyle(color: Colors.black)),
           ),
         ],
       ),
@@ -456,15 +530,9 @@ class _PauseDialog extends StatelessWidget {
         decoration: BoxDecoration(
           color: const Color(0xFF1a1a2e).withOpacity(0.95),
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: Colors.purpleAccent.withOpacity(0.5),
-            width: 2,
-          ),
+          border: Border.all(color: Colors.purpleAccent.withOpacity(0.5), width: 2),
           boxShadow: [
-            BoxShadow(
-              color: Colors.purpleAccent.withOpacity(0.2),
-              blurRadius: 30,
-            ),
+            BoxShadow(color: Colors.purpleAccent.withOpacity(0.2), blurRadius: 30),
           ],
         ),
         child: Column(
@@ -486,6 +554,7 @@ class _PauseDialog extends StatelessWidget {
               Colors.greenAccent,
               () {
                 game.resumeGame();
+                AudioService().resumeBGM();
                 Navigator.pop(context);
               },
             ),
@@ -497,15 +566,6 @@ class _PauseDialog extends StatelessWidget {
               () {
                 game.restartLevel();
                 Navigator.pop(context);
-              },
-            ),
-            const SizedBox(height: 12),
-            _buildPauseButton(
-              'Settings',
-              Icons.settings,
-              Colors.blueAccent,
-              () {
-                // Navigate to settings
               },
             ),
             const SizedBox(height: 12),
@@ -541,10 +601,7 @@ class _PauseDialog extends StatelessWidget {
         decoration: BoxDecoration(
           color: color.withOpacity(0.2),
           borderRadius: BorderRadius.circular(25),
-          border: Border.all(
-            color: color.withOpacity(0.5),
-            width: 1,
-          ),
+          border: Border.all(color: color.withOpacity(0.5), width: 1),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
