@@ -28,12 +28,16 @@ android {
     ndkVersion flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        // BUG FIX: Added coreLibraryDesugaringEnabled.
+        // audioplayers + other plugins using java.time APIs on minSdk 21
+        // require desugaring or the build will crash at runtime on API < 26.
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = '1.8'
+        jvmTarget = '17'
     }
 
     sourceSets {
@@ -51,10 +55,21 @@ android {
 
     signingConfigs {
         release {
-            keyAlias System.getenv("KEY_ALIAS") ?: "crystalcascade"
-            keyPassword System.getenv("KEY_PASSWORD") ?: ""
-            storeFile file(System.getenv("KEYSTORE_PATH") ?: "release-key.jks")
-            storePassword System.getenv("KEYSTORE_PASSWORD") ?: ""
+            // BUG FIX: Original code called file() unconditionally on the env-var path.
+            // If KEYSTORE_PATH is not set (e.g., local debug build), Gradle throws a
+            // config-phase error even before the build task runs.
+            // Guard: only wire up release signing when all env vars are present.
+            def keystorePath = System.getenv("KEYSTORE_PATH")
+            def keystorePassword = System.getenv("KEYSTORE_PASSWORD")
+            def keyAlias = System.getenv("KEY_ALIAS")
+            def keyPassword = System.getenv("KEY_PASSWORD")
+
+            if (keystorePath && keystorePassword && keyAlias && keyPassword) {
+                storeFile file("${rootProject.projectDir}/app/${keystorePath}")
+                storePassword keystorePassword
+                keyAlias keyAlias
+                keyPassword keyPassword
+            }
         }
     }
 
@@ -89,6 +104,8 @@ flutter {
 }
 
 dependencies {
+    // BUG FIX: Added desugar_jdk_libs required by coreLibraryDesugaringEnabled
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0"
     implementation 'androidx.multidex:multidex:2.0.1'
 }
