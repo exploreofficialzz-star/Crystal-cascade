@@ -28,9 +28,6 @@ android {
     ndkVersion flutter.ndkVersion
 
     compileOptions {
-        // BUG FIX: Added coreLibraryDesugaringEnabled.
-        // audioplayers + other plugins using java.time APIs on minSdk 21
-        // require desugaring or the build will crash at runtime on API < 26.
         coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -55,20 +52,20 @@ android {
 
     signingConfigs {
         release {
-            // BUG FIX: Original code called file() unconditionally on the env-var path.
-            // If KEYSTORE_PATH is not set (e.g., local debug build), Gradle throws a
-            // config-phase error even before the build task runs.
-            // Guard: only wire up release signing when all env vars are present.
-            def keystorePath = System.getenv("KEYSTORE_PATH")
-            def keystorePassword = System.getenv("KEYSTORE_PASSWORD")
-            def keyAlias = System.getenv("KEY_ALIAS")
-            def keyPassword = System.getenv("KEY_PASSWORD")
+            // FIX: Renamed locals with "env" prefix to avoid Groovy DSL name collision.
+            // Writing "keyAlias keyAlias" makes Groovy try to call the String variable
+            // as a function → "No signature of method: java.lang.String.call()"
+            // Using distinct names + explicit "=" assignment prevents this entirely.
+            def envKeystorePath     = System.getenv("KEYSTORE_PATH")
+            def envKeystorePassword = System.getenv("KEYSTORE_PASSWORD")
+            def envKeyAlias         = System.getenv("KEY_ALIAS")
+            def envKeyPassword      = System.getenv("KEY_PASSWORD")
 
-            if (keystorePath && keystorePassword && keyAlias && keyPassword) {
-                storeFile file("${rootProject.projectDir}/app/${keystorePath}")
-                storePassword keystorePassword
-                keyAlias keyAlias
-                keyPassword keyPassword
+            if (envKeystorePath && envKeystorePassword && envKeyAlias && envKeyPassword) {
+                storeFile     = file("${rootProject.projectDir}/app/${envKeystorePath}")
+                storePassword = envKeystorePassword
+                keyAlias      = envKeyAlias
+                keyPassword   = envKeyPassword
             }
         }
     }
@@ -104,7 +101,6 @@ flutter {
 }
 
 dependencies {
-    // BUG FIX: Added desugar_jdk_libs required by coreLibraryDesugaringEnabled
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0"
     implementation 'androidx.multidex:multidex:2.0.1'
