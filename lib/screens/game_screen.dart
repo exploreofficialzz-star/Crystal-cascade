@@ -77,7 +77,7 @@ class _GameScreenState extends State<GameScreen>
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvoked: (bool didPop) {
+      onPopInvokedWithResult: (bool didPop, dynamic result) {
         if (didPop) return;
         final game = context.read<GameProvider>();
         if (game.status == GameStatus.playing) {
@@ -429,10 +429,12 @@ class _GameScreenState extends State<GameScreen>
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () async {
+                onPressed: () {
+                  final hasCoins = game.totalCoins >= GameConstants.extraMovesCost;
                   Navigator.pop(ctx);
-                  final success = await game.buyExtraMoves();
-                  if (!success) {
+                  if (hasCoins) {
+                    game.buyExtraMoves();
+                  } else {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text('Not enough coins! Watch a video instead.'),
