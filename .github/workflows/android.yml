@@ -24,7 +24,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'   # BUG FIX: was '3.22.0' (EOL/outdated); use latest stable
+          flutter-version: '3.24.0'
           channel: 'stable'
           cache: true
 
@@ -37,11 +37,6 @@ jobs:
       - name: Run tests
         run: flutter test
 
-      # ─────────────────────────────────────────────────────────────────
-      # BUG FIX: The original workflow was MISSING this entire block.
-      # The build.gradle reads KEYSTORE_PATH as a file path, but the file
-      # was never written to disk — causing a Gradle config-phase crash.
-      # ─────────────────────────────────────────────────────────────────
       - name: Decode keystore
         if: github.event_name != 'pull_request'
         run: |
@@ -49,13 +44,13 @@ jobs:
 
       - name: Build APK
         env:
-          # BUG FIX: Signing env vars were never passed to the build step.
-          # Gradle reads these via System.getenv() in signingConfigs.release.
           KEYSTORE_PATH: release-key.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: flutter build apk --release --split-per-abi
+        # FIX: --flavor production prevents Gradle from building the "development"
+        # flavor which has no separate mipmap icons and causes resource linking to fail.
+        run: flutter build apk --release --split-per-abi --flavor production
 
       - name: Build App Bundle (AAB)
         env:
@@ -63,7 +58,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: flutter build appbundle --release
+        run: flutter build appbundle --release --flavor production
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -76,7 +71,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-app-bundle
-          path: build/app/outputs/bundle/release/*.aab
+          path: build/app/outputs/bundle/productionRelease/*.aab
           retention-days: 30
 
       - name: Create Release
@@ -85,7 +80,7 @@ jobs:
         with:
           files: |
             build/app/outputs/flutter-apk/*.apk
-            build/app/outputs/bundle/release/*.aab
+            build/app/outputs/bundle/productionRelease/*.aab
           tag_name: v${{ github.run_number }}
           name: Release v${{ github.run_number }}
           body: |
