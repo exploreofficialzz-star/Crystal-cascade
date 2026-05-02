@@ -24,7 +24,7 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.chastechgroup.crystalcascade"
-    compileSdkVersion 34
+    compileSdkVersion 35        // bumped from 34 — audioplayers_android requires 35+
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -44,7 +44,7 @@ android {
     defaultConfig {
         applicationId "com.chastechgroup.crystalcascade"
         minSdkVersion 21
-        targetSdkVersion 34
+        targetSdkVersion 35     // bumped from 34 to match compileSdk
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
@@ -52,10 +52,7 @@ android {
 
     signingConfigs {
         release {
-            // FIX: Renamed locals with "env" prefix to avoid Groovy DSL name collision.
-            // Writing "keyAlias keyAlias" makes Groovy try to call the String variable
-            // as a function → "No signature of method: java.lang.String.call()"
-            // Using distinct names + explicit "=" assignment prevents this entirely.
+            // env-prefixed locals avoid Groovy DSL name collision with DSL properties
             def envKeystorePath     = System.getenv("KEYSTORE_PATH")
             def envKeystorePassword = System.getenv("KEYSTORE_PASSWORD")
             def envKeyAlias         = System.getenv("KEY_ALIAS")
