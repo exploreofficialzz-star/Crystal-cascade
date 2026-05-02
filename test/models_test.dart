@@ -81,7 +81,7 @@ void main() {
       final level1 = levels[0];
       expect(level1.id, 1);
       expect(level1.tubesCount, 3);
-      expect(level1.tubeCapacity, 4);
+      expect(level1.tubeCapacity, 6);
       expect(level1.availableColors.length, 2);
     });
   });
