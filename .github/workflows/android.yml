@@ -7,6 +7,11 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# FIX: Explicit permissions required — without contents:write the default
+# GITHUB_TOKEN cannot create releases, resulting in a 403 error.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -48,8 +53,6 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        # FIX: --flavor production prevents Gradle from building the "development"
-        # flavor which has no separate mipmap icons and causes resource linking to fail.
         run: flutter build apk --release --split-per-abi --flavor production
 
       - name: Build App Bundle (AAB)
