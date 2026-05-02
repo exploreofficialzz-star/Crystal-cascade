@@ -24,7 +24,7 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.chastechgroup.crystalcascade"
-    compileSdkVersion 35        // bumped from 34 — audioplayers_android requires 35+
+    compileSdkVersion 35
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -44,7 +44,7 @@ android {
     defaultConfig {
         applicationId "com.chastechgroup.crystalcascade"
         minSdkVersion 21
-        targetSdkVersion 35     // bumped from 34 to match compileSdk
+        targetSdkVersion 35
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
@@ -52,7 +52,6 @@ android {
 
     signingConfigs {
         release {
-            // env-prefixed locals avoid Groovy DSL name collision with DSL properties
             def envKeystorePath     = System.getenv("KEYSTORE_PATH")
             def envKeystorePassword = System.getenv("KEYSTORE_PASSWORD")
             def envKeyAlias         = System.getenv("KEY_ALIAS")
@@ -101,4 +100,6 @@ dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0"
     implementation 'androidx.multidex:multidex:2.0.1'
+    // FIX: Required for Theme.AppCompat.Light.NoActionBar in styles.xml
+    implementation 'androidx.appcompat:appcompat:1.7.0'
 }
