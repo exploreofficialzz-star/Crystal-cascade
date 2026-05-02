@@ -65,30 +65,61 @@ class GameProvider extends ChangeNotifier {
   }
 
   void _generateTubes(Level level) {
-    _tubes = [];
     final random = Random();
-    final List<Gem> allGems = [];
 
-    for (final color in level.availableColors) {
-      for (int i = 0; i < level.gemsPerColor; i++) {
-        allGems.add(Gem(
-          id: '${color.name}_$i',
-          color: color,
+    // ── SOLVABLE SHUFFLE: reverse-from-solved ─────────────────────────────────
+    // The old approach (allGems.shuffle) distributes gems randomly across tubes
+    // which can produce boards where gems are permanently deadlocked — e.g.
+    // two alternating-color stacks with no way to ever separate them fully.
+    //
+    // Fix: start with the SOLVED state (each tube holds one color, fully sorted),
+    // then apply N random VALID game moves to scramble it. Because every move we
+    // make is a legal game move, the resulting board is guaranteed to be solvable
+    // by reversing those exact moves — the player just needs to find the path.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Step 1 — Build solved state
+    _tubes = List.generate(level.tubesCount, (_) => <Gem>[]);
+
+    for (int c = 0; c < level.availableColors.length; c++) {
+      for (int g = 0; g < level.gemsPerColor; g++) {
+        _tubes[c].add(Gem(
+          id: '\${level.availableColors[c].name}_\$g',
+          color: level.availableColors[c],
         ));
       }
     }
+    // Remaining tubes stay empty (empty buffer tubes for the player to use)
 
-    allGems.shuffle(random);
+    // Step 2 — Scramble with valid moves
+    // Use 3× the max moves so the board is well-shuffled but always solvable.
+    final int scrambleSteps = level.maxMoves * 3;
+    int lastFrom = -1;
+    int lastTo   = -1;
 
-    for (int t = 0; t < level.tubesCount; t++) {
-      _tubes.add([]);
-    }
-
-    int gemIndex = 0;
-    for (int t = 0; t < level.tubesCount - 1; t++) {
-      for (int g = 0; g < level.tubeCapacity && gemIndex < allGems.length; g++) {
-        _tubes[t].add(allGems[gemIndex++]);
+    for (int step = 0; step < scrambleSteps; step++) {
+      // Collect all legal moves (same rules as the game)
+      final List<List<int>> validMoves = [];
+      for (int from = 0; from < _tubes.length; from++) {
+        if (_tubes[from].isEmpty) continue;
+        for (int to = 0; to < _tubes.length; to++) {
+          if (from == to) continue;
+          if (_tubes[to].length >= level.tubeCapacity) continue;
+          // Avoid immediately undoing the last move (keeps scramble diverse)
+          if (from == lastTo && to == lastFrom) continue;
+          if (_tubes[to].isEmpty || _tubes[to].last.color == _tubes[from].last.color) {
+            validMoves.add([from, to]);
+          }
+        }
       }
+
+      if (validMoves.isEmpty) break;
+
+      final move = validMoves[random.nextInt(validMoves.length)];
+      final gem = _tubes[move[0]].removeLast();
+      _tubes[move[1]].add(gem);
+      lastFrom = move[0];
+      lastTo   = move[1];
     }
   }
 
