@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../models/gem.dart';
@@ -8,6 +9,14 @@ import '../utils/constants.dart';
 
 enum GameStatus { idle, playing, paused, won, lost }
 
+/// Result returned by useHint() so the UI can respond appropriately.
+enum HintResult {
+  used,        // hint applied successfully (used stored hint)
+  usedCoins,   // hint applied, coins deducted
+  noCoins,     // out of hints AND not enough coins → show monetization wall
+  noHints,     // no hints available at all → show monetization wall
+}
+
 class GameProvider extends ChangeNotifier {
   final StorageService _storage = StorageService();
   final AudioService _audio = AudioService();
@@ -16,16 +25,20 @@ class GameProvider extends ChangeNotifier {
   GameStatus _status = GameStatus.idle;
   List<List<Gem>> _tubes = [];
   int _selectedTubeIndex = -1;
+  int _hintDestinationIndex = -1;   // tube the hint arrow points TO
   int _movesRemaining = 0;
   int _score = 0;
   int _stars = 0;
   int _comboCount = 0;
   List<Level> _levels = [];
 
+  Timer? _hintClearTimer;
+
   Level? get currentLevel => _currentLevel;
   GameStatus get status => _status;
   List<List<Gem>> get tubes => _tubes;
   int get selectedTubeIndex => _selectedTubeIndex;
+  int get hintDestinationIndex => _hintDestinationIndex;
   int get movesRemaining => _movesRemaining;
   int get score => _score;
   int get stars => _stars;
@@ -56,10 +69,12 @@ class GameProvider extends ChangeNotifier {
     _currentLevel = level;
     _status = GameStatus.playing;
     _selectedTubeIndex = -1;
+    _hintDestinationIndex = -1;
     _movesRemaining = level.maxMoves;
     _score = 0;
     _stars = 0;
     _comboCount = 0;
+    _hintClearTimer?.cancel();
     _generateTubes(level);
     notifyListeners();
   }
@@ -68,22 +83,15 @@ class GameProvider extends ChangeNotifier {
     _tubes = [];
     final random = Random();
     final List<Gem> allGems = [];
-
     for (final color in level.availableColors) {
       for (int i = 0; i < level.gemsPerColor; i++) {
-        allGems.add(Gem(
-          id: '${color.name}_$i',
-          color: color,
-        ));
+        allGems.add(Gem(id: '${color.name}_$i', color: color));
       }
     }
-
     allGems.shuffle(random);
-
     for (int t = 0; t < level.tubesCount; t++) {
       _tubes.add([]);
     }
-
     int gemIndex = 0;
     for (int t = 0; t < level.tubesCount - 1; t++) {
       for (int g = 0; g < level.tubeCapacity && gemIndex < allGems.length; g++) {
@@ -92,8 +100,12 @@ class GameProvider extends ChangeNotifier {
     }
   }
 
-    void onTubeTap(int tubeIndex) {
+  void onTubeTap(int tubeIndex) {
     if (_status != GameStatus.playing) return;
+
+    // Clear hint glow on any tap
+    _hintClearTimer?.cancel();
+    _hintDestinationIndex = -1;
 
     if (_selectedTubeIndex == -1) {
       if (_tubes[tubeIndex].isNotEmpty) {
@@ -127,10 +139,8 @@ class GameProvider extends ChangeNotifier {
     _score += 10;
 
     _audio.playTap();
-
     _checkMatches(toIndex);
     _checkWinCondition();
-
     notifyListeners();
   }
 
@@ -140,7 +150,6 @@ class GameProvider extends ChangeNotifier {
 
     final lastColor = tube.last.color;
     int matchCount = 1;
-
     for (int i = tube.length - 2; i >= 0; i--) {
       if (tube[i].color == lastColor) {
         matchCount++;
@@ -153,11 +162,9 @@ class GameProvider extends ChangeNotifier {
       _comboCount++;
       final bonus = _comboCount * 50;
       _score += bonus;
-
       for (int i = 0; i < matchCount && tube.isNotEmpty; i++) {
         tube.removeLast();
       }
-
       _audio.playMatch();
       _storage.addCoins(GameConstants.coinsPerStar);
     }
@@ -166,12 +173,8 @@ class GameProvider extends ChangeNotifier {
   void _checkWinCondition() {
     bool allEmpty = true;
     for (final tube in _tubes) {
-      if (tube.isNotEmpty) {
-        allEmpty = false;
-        break;
-      }
+      if (tube.isNotEmpty) { allEmpty = false; break; }
     }
-
     if (allEmpty) {
       _status = GameStatus.won;
       _stars = _currentLevel?.calculateStars(_movesRemaining) ?? 1;
@@ -180,7 +183,6 @@ class GameProvider extends ChangeNotifier {
       _saveProgress();
       return;
     }
-
     if (_movesRemaining <= 0) {
       _status = GameStatus.lost;
       _audio.playGameOver();
@@ -190,50 +192,111 @@ class GameProvider extends ChangeNotifier {
 
   void _saveProgress() async {
     if (_currentLevel == null) return;
-
     final currentBestStars = _currentLevel!.bestStars ?? 0;
     final newStars = _stars > currentBestStars ? _stars : currentBestStars;
-
-    final updatedLevel = _currentLevel!.copyWith(
-      bestStars: newStars,
-      bestScore: _score,
-    );
-
+    final updatedLevel = _currentLevel!.copyWith(bestStars: newStars, bestScore: _score);
     await _storage.saveLevelProgress(updatedLevel);
     await _storage.addCoins(GameConstants.coinsPerLevelComplete);
-
     final nextLevelIndex = _currentLevel!.id;
     if (nextLevelIndex < _levels.length) {
       final nextLevel = _levels[nextLevelIndex].copyWith(isUnlocked: true);
       _levels[nextLevelIndex] = nextLevel;
       await _storage.saveLevelProgress(nextLevel);
     }
-
     _loadLevelProgress();
   }
 
-  void useHint() async {
-    if (_status != GameStatus.playing || _currentLevel == null) return;
-    if (hints <= 0) {
-      if (totalCoins >= GameConstants.hintCost) {
-        await _storage.spendCoins(GameConstants.hintCost);
-      } else {
-        return;
-      }
-    } else {
-      await _storage.setHints(hints - 1);
+  // ─── Hint System ──────────────────────────────────────────────────────────
+  //
+  //  Priority order:
+  //   1. Has hints stored  → use 1, show smart move highlight
+  //   2. No hints, has coins (≥ hintCost) → spend coins, show hint (usedCoins)
+  //   3. Nothing → return noCoins / noHints so UI shows monetization dialog
+
+  Future<HintResult> useHint() async {
+    if (_status != GameStatus.playing || _currentLevel == null) {
+      return HintResult.noHints;
     }
 
-    // Simple hint: select a tube with movable gem
+    if (hints > 0) {
+      await _storage.setHints(hints - 1);
+      _applySmartHint();
+      notifyListeners();
+      return HintResult.used;
+    }
+
+    // No stored hints — try spending coins
+    if (totalCoins >= GameConstants.hintCost) {
+      await _storage.spendCoins(GameConstants.hintCost);
+      _applySmartHint();
+      notifyListeners();
+      return HintResult.usedCoins;
+    }
+
+    // Completely broke — tell UI to show the monetization wall
+    return HintResult.noCoins;
+  }
+
+  /// Finds the best valid move and highlights source + destination tubes.
+  void _applySmartHint() {
+    final capacity = _currentLevel?.tubeCapacity ?? 4;
+
+    for (int from = 0; from < _tubes.length; from++) {
+      if (_tubes[from].isEmpty) continue;
+      final topGem = _tubes[from].last;
+
+      for (int to = 0; to < _tubes.length; to++) {
+        if (from == to) continue;
+        final dest = _tubes[to];
+        if (dest.length >= capacity) continue;
+
+        final isValidMove = dest.isEmpty || dest.last.color == topGem.color;
+        if (isValidMove) {
+          _selectedTubeIndex = from;
+          _hintDestinationIndex = to;
+          _scheduleHintClear();
+          return;
+        }
+      }
+    }
+
+    // Fallback: just highlight first non-empty tube
     for (int i = 0; i < _tubes.length; i++) {
       if (_tubes[i].isNotEmpty) {
         _selectedTubeIndex = i;
-        notifyListeners();
+        _hintDestinationIndex = -1;
+        _scheduleHintClear();
         return;
       }
     }
   }
 
+  void _scheduleHintClear() {
+    _hintClearTimer?.cancel();
+    _hintClearTimer = Timer(GameConstants.hintGlowDuration, () {
+      _hintDestinationIndex = -1;
+      notifyListeners();
+    });
+  }
+
+  /// Add hints (from ad reward or IAP). Notifies listeners.
+  void addHints(int count) async {
+    await _storage.addHints(count);
+    notifyListeners();
+  }
+
+  /// Buy a single hint with coins (called from game screen coin path).
+  Future<bool> buyHintWithCoins() async {
+    if (totalCoins >= GameConstants.hintCost) {
+      await _storage.spendCoins(GameConstants.hintCost);
+      await _storage.addHints(1);
+      notifyListeners();
+      return true;
+    }
+    return false;
+  }
+
+  // ─── Extra Moves ──────────────────────────────────────────────────────────
   void buyExtraMoves() async {
     if (_status != GameStatus.playing) return;
     if (await _storage.spendCoins(GameConstants.extraMovesCost)) {
@@ -242,30 +305,21 @@ class GameProvider extends ChangeNotifier {
     }
   }
 
+  // ─── Misc ─────────────────────────────────────────────────────────────────
   void pauseGame() {
-    if (_status == GameStatus.playing) {
-      _status = GameStatus.paused;
-      notifyListeners();
-    }
+    if (_status == GameStatus.playing) { _status = GameStatus.paused; notifyListeners(); }
   }
 
   void resumeGame() {
-    if (_status == GameStatus.paused) {
-      _status = GameStatus.playing;
-      notifyListeners();
-    }
+    if (_status == GameStatus.paused) { _status = GameStatus.playing; notifyListeners(); }
   }
 
   void restartLevel() {
-    if (_currentLevel != null) {
-      startLevel(_currentLevel!);
-    }
+    if (_currentLevel != null) startLevel(_currentLevel!);
   }
 
   void useLifeAndRestart() async {
-    if (await _storage.useLife()) {
-      restartLevel();
-    }
+    if (await _storage.useLife()) restartLevel();
   }
 
   void claimRewardCoins(int amount) async {
@@ -276,9 +330,7 @@ class GameProvider extends ChangeNotifier {
   void claimRewardMoves(int amount) {
     if (_status == GameStatus.lost || _status == GameStatus.playing) {
       _movesRemaining += amount;
-      if (_status == GameStatus.lost) {
-        _status = GameStatus.playing;
-      }
+      if (_status == GameStatus.lost) _status = GameStatus.playing;
       notifyListeners();
     }
   }
@@ -286,5 +338,11 @@ class GameProvider extends ChangeNotifier {
   void claimRewardLife() async {
     await _storage.addLife();
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _hintClearTimer?.cancel();
+    super.dispose();
   }
 }

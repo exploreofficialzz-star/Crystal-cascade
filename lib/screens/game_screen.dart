@@ -9,6 +9,7 @@ import '../widgets/ad_banner_widget.dart';
 import '../widgets/tube_widget.dart';
 import 'game_over_screen.dart';
 import 'home_screen.dart';
+import 'shop_screen.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
@@ -17,28 +18,21 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
-// FIX 1: Added WidgetsBindingObserver so BGM pauses/resumes with app lifecycle
-// instead of stopping permanently when the screen loses focus.
 class _GameScreenState extends State<GameScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pulseController;
-
-  // FIX 2: Subscription to AdMob reward stream so +5 moves actually applies
-  // after the rewarded ad finishes. Previously the dialog closed immediately
-  // without ever listening for the reward callback.
   StreamSubscription<bool>? _rewardSubscription;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this); // for BGM lifecycle
+    WidgetsBinding.instance.addObserver(this);
 
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
 
-    // Wire up the ad reward → grant moves
     _rewardSubscription = AdMobService().onRewardEarned.listen((_) {
       if (!mounted) return;
       context.read<GameProvider>().claimRewardMoves(5);
@@ -60,16 +54,13 @@ class _GameScreenState extends State<GameScreen>
     super.dispose();
   }
 
-  // FIX 1 continued: Resume/pause BGM when app goes background/foreground
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
       AudioService().pauseBGM();
     } else if (state == AppLifecycleState.resumed) {
       final game = context.read<GameProvider>();
-      if (game.status == GameStatus.playing) {
-        AudioService().resumeBGM();
-      }
+      if (game.status == GameStatus.playing) AudioService().resumeBGM();
     }
   }
 
@@ -140,34 +131,29 @@ class _GameScreenState extends State<GameScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _buildHUDButton(
-            Icons.arrow_back_ios,
-            () => _onBackPressed(context),
-          ),
+          _buildHUDButton(Icons.arrow_back_ios, () => _onBackPressed(context)),
           Expanded(
             child: Column(
               children: [
                 Text(
                   'Level ${game.currentLevel?.id ?? 1}',
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+                      color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 4),
                 AnimatedBuilder(
                   animation: _pulseController,
                   builder: (context, child) {
+                    final isLow = game.movesRemaining <= 3;
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                       decoration: BoxDecoration(
-                        color: game.movesRemaining <= 3
+                        color: isLow
                             ? Colors.red.withOpacity(0.3 + _pulseController.value * 0.3)
                             : Colors.black.withOpacity(0.3),
                         borderRadius: BorderRadius.circular(15),
                         border: Border.all(
-                          color: game.movesRemaining <= 3
+                          color: isLow
                               ? Colors.redAccent.withOpacity(0.8)
                               : Colors.white.withOpacity(0.2),
                           width: 1,
@@ -176,9 +162,7 @@ class _GameScreenState extends State<GameScreen>
                       child: Text(
                         'Moves: ${game.movesRemaining}',
                         style: TextStyle(
-                          color: game.movesRemaining <= 3
-                              ? Colors.redAccent
-                              : Colors.white,
+                          color: isLow ? Colors.redAccent : Colors.white,
                           fontSize: 14,
                           fontWeight: FontWeight.bold,
                         ),
@@ -189,13 +173,10 @@ class _GameScreenState extends State<GameScreen>
               ],
             ),
           ),
-          _buildHUDButton(
-            Icons.pause,
-            () {
-              game.pauseGame();
-              _showPauseMenu(context);
-            },
-          ),
+          _buildHUDButton(Icons.pause, () {
+            game.pauseGame();
+            _showPauseMenu(context);
+          }),
         ],
       ),
     );
@@ -210,10 +191,7 @@ class _GameScreenState extends State<GameScreen>
         decoration: BoxDecoration(
           color: Colors.black.withOpacity(0.3),
           shape: BoxShape.circle,
-          border: Border.all(
-            color: Colors.white.withOpacity(0.2),
-            width: 1,
-          ),
+          border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
         ),
         child: Icon(icon, color: Colors.white, size: 20),
       ),
@@ -235,6 +213,7 @@ class _GameScreenState extends State<GameScreen>
               gems: game.tubes[index],
               capacity: game.currentLevel?.tubeCapacity ?? 4,
               isSelected: game.selectedTubeIndex == index,
+              isHintTarget: game.hintDestinationIndex == index,
               onTap: () => game.onTubeTap(index),
               width: 65,
               gemSize: 48,
@@ -255,6 +234,7 @@ class _GameScreenState extends State<GameScreen>
                   gems: game.tubes[index],
                   capacity: game.currentLevel?.tubeCapacity ?? 4,
                   isSelected: game.selectedTubeIndex == index,
+                  isHintTarget: game.hintDestinationIndex == index,
                   onTap: () => game.onTubeTap(index),
                   width: 70,
                   gemSize: 52,
@@ -273,11 +253,12 @@ class _GameScreenState extends State<GameScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
+          // Hint button shows current count
           _buildControlButton(
             Icons.lightbulb_outline,
-            'Hint',
-            Colors.yellowAccent,
-            () => game.useHint(),
+            game.hints > 0 ? 'Hint (${game.hints})' : 'Hint',
+            game.hints > 0 ? Colors.yellowAccent : Colors.white38,
+            () => _onHintTap(context),
           ),
           _buildControlButton(
             Icons.add_circle_outline,
@@ -318,9 +299,179 @@ class _GameScreenState extends State<GameScreen>
             child: Icon(icon, color: color, size: 24),
           ),
           const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 11),
+          Text(label,
+              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 11)),
+        ],
+      ),
+    );
+  }
+
+  // ─── Hint tap handler ─────────────────────────────────────────────────────
+  void _onHintTap(BuildContext context) async {
+    final game = context.read<GameProvider>();
+    final result = await game.useHint();
+    if (!mounted) return;
+
+    switch (result) {
+      case HintResult.used:
+        // Hint applied — tubes are now highlighted. No dialog needed.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('💡 Hint used! ${game.hints} remaining.'),
+            backgroundColor: Colors.amber.withOpacity(0.9),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        break;
+
+      case HintResult.usedCoins:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                '💡 Hint used! (${GameConstants.hintCost} coins spent) — ${game.totalCoins} left.'),
+            backgroundColor: Colors.amber.withOpacity(0.9),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        break;
+
+      case HintResult.noCoins:
+      case HintResult.noHints:
+        _showHintMonetizationDialog(context, game);
+        break;
+    }
+  }
+
+  /// Shown when the player has no hints AND not enough coins.
+  /// Three paths: Watch Ad (free hint) | Buy with coins | Go to Shop.
+  void _showHintMonetizationDialog(BuildContext context, GameProvider game) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1a1a2e),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: Colors.yellowAccent.withOpacity(0.4), width: 1.5),
+        ),
+        title: const Text(
+          'Out of Hints!',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lightbulb, color: Colors.yellowAccent, size: 52),
+            const SizedBox(height: 12),
+            const Text(
+              'Get a hint to reveal the best move.',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+
+            // ── Option 1: Watch Ad (free) ──────────────────────────────────
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  // Reward stream → addHints(1) then auto-applies via callback
+                  AdMobService().onRewardEarned.first.then((_) {
+                    if (!mounted) return;
+                    game.addHints(1);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('💡 You got 1 hint!'),
+                        backgroundColor: Colors.amber,
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  });
+                  AdMobService().showRewardedAd(type: 'hint');
+                },
+                icon: const Icon(Icons.play_circle_fill, color: Colors.black),
+                label: const Text(
+                  'Watch Ad — Free Hint',
+                  style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.amberAccent,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // ── Option 2: Spend coins ──────────────────────────────────────
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: game.totalCoins >= GameConstants.hintCost
+                    ? () async {
+                        final bought = await game.buyHintWithCoins();
+                        if (!mounted) return;
+                        Navigator.pop(ctx);
+                        if (bought) {
+                          // Immediately use the hint we just bought
+                          await game.useHint();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                  '💡 Hint applied! ${GameConstants.hintCost} coins spent.'),
+                              backgroundColor: Colors.amber.withOpacity(0.9),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      }
+                    : null, // greyed out if not enough coins
+                icon: const Icon(Icons.monetization_on, color: Colors.white),
+                label: Text(
+                  'Use ${GameConstants.hintCost} Coins  (have ${game.totalCoins})',
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.purple,
+                  disabledBackgroundColor: Colors.purple.withOpacity(0.3),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // ── Option 3: Go to Shop ───────────────────────────────────────
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ShopScreen()),
+                  );
+                },
+                icon: const Icon(Icons.storefront, color: Colors.purpleAccent),
+                label: const Text(
+                  'Buy Hint Pack in Shop',
+                  style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: Colors.purpleAccent.withOpacity(0.5)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Not now', style: TextStyle(color: Colors.white38)),
           ),
         ],
       ),
@@ -343,12 +494,6 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  // FIX 3 + FIX 4: Rewired extra moves dialog.
-  // - "Watch Video" now properly closes dialog BEFORE showing ad so the ad
-  //   has a clean context. The reward stream listener (in initState) applies
-  //   the moves once the ad completes.
-  // - "Use Coins" button now has a clear label with coin icon and shows
-  //   the cost explicitly.
   void _showExtraMovesDialog(BuildContext context) {
     final game = context.read<GameProvider>();
     showDialog(
@@ -369,63 +514,45 @@ class _GameScreenState extends State<GameScreen>
           children: [
             const Icon(Icons.add_circle, color: Colors.greenAccent, size: 56),
             const SizedBox(height: 16),
-            const Text(
-              '+5 Moves',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-              textAlign: TextAlign.center,
-            ),
+            const Text('+5 Moves',
+                style: TextStyle(
+                    color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center),
             const SizedBox(height: 12),
-            const Text(
-              'Watch a short video for free:',
-              style: TextStyle(color: Colors.white70, fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
+            const Text('Watch a short video for free:',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+                textAlign: TextAlign.center),
             const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  // FIX 3: Close dialog first, then show ad. The reward listener
-                  // in initState will call claimRewardMoves(5) when ad finishes.
                   AdMobService().showRewardedAd(type: 'extra_moves');
                 },
                 icon: const Icon(Icons.play_circle_outline, color: Colors.black),
-                label: const Text(
-                  'Watch Video',
-                  style: TextStyle(
-                    color: Colors.black,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
-                ),
+                label: const Text('Watch Video',
+                    style: TextStyle(
+                        color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.amberAccent,
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  shape:
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ),
             const SizedBox(height: 16),
-            const Row(
-              children: [
-                Expanded(child: Divider(color: Colors.white24)),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: Text('OR', style: TextStyle(color: Colors.white38, fontSize: 12)),
-                ),
-                Expanded(child: Divider(color: Colors.white24)),
-              ],
-            ),
+            const Row(children: [
+              Expanded(child: Divider(color: Colors.white24)),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child:
+                    Text('OR', style: TextStyle(color: Colors.white38, fontSize: 12)),
+              ),
+              Expanded(child: Divider(color: Colors.white24)),
+            ]),
             const SizedBox(height: 12),
-            // FIX 4: This button was previously just labelled "Buy" with white
-            // text on a purple background — hard to read and no cost shown.
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -448,25 +575,19 @@ class _GameScreenState extends State<GameScreen>
                 label: Text(
                   'Use ${GameConstants.extraMovesCost} Coins',
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.purple,
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  shape:
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ),
             const SizedBox(height: 6),
-            Text(
-              'You have ${game.totalCoins} coins',
-              style: const TextStyle(color: Colors.white38, fontSize: 12),
-            ),
+            Text('You have ${game.totalCoins} coins',
+                style: const TextStyle(color: Colors.white38, fontSize: 12)),
           ],
         ),
         actions: [
@@ -488,16 +609,12 @@ class _GameScreenState extends State<GameScreen>
           borderRadius: BorderRadius.circular(20),
           side: BorderSide(color: Colors.orangeAccent.withOpacity(0.5), width: 1),
         ),
-        title: const Text(
-          'Restart Level?',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          textAlign: TextAlign.center,
-        ),
-        content: Text(
-          'Your current progress will be lost.',
-          style: TextStyle(color: Colors.white.withOpacity(0.7)),
-          textAlign: TextAlign.center,
-        ),
+        title: const Text('Restart Level?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center),
+        content: Text('Your current progress will be lost.',
+            style: TextStyle(color: Colors.white.withOpacity(0.7)),
+            textAlign: TextAlign.center),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -524,7 +641,6 @@ class _PauseDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final game = context.read<GameProvider>();
-
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
@@ -534,55 +650,37 @@ class _PauseDialog extends StatelessWidget {
           borderRadius: BorderRadius.circular(24),
           border: Border.all(color: Colors.purpleAccent.withOpacity(0.5), width: 2),
           boxShadow: [
-            BoxShadow(color: Colors.purpleAccent.withOpacity(0.2), blurRadius: 30),
+            BoxShadow(color: Colors.purpleAccent.withOpacity(0.2), blurRadius: 30)
           ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'PAUSED',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 4,
-              ),
-            ),
+            const Text('PAUSED',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 4)),
             const SizedBox(height: 30),
-            _buildPauseButton(
-              'Resume',
-              Icons.play_arrow,
-              Colors.greenAccent,
-              () {
-                game.resumeGame();
-                AudioService().resumeBGM();
-                Navigator.pop(context);
-              },
-            ),
+            _buildPauseButton('Resume', Icons.play_arrow, Colors.greenAccent, () {
+              game.resumeGame();
+              AudioService().resumeBGM();
+              Navigator.pop(context);
+            }),
             const SizedBox(height: 12),
-            _buildPauseButton(
-              'Restart',
-              Icons.refresh,
-              Colors.orangeAccent,
-              () {
-                game.restartLevel();
-                Navigator.pop(context);
-              },
-            ),
+            _buildPauseButton('Restart', Icons.refresh, Colors.orangeAccent, () {
+              game.restartLevel();
+              Navigator.pop(context);
+            }),
             const SizedBox(height: 12),
-            _buildPauseButton(
-              'Quit',
-              Icons.exit_to_app,
-              Colors.redAccent,
-              () {
-                AudioService().playBGM();
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const HomeScreen()),
-                  (route) => false,
-                );
-              },
-            ),
+            _buildPauseButton('Quit', Icons.exit_to_app, Colors.redAccent, () {
+              AudioService().playBGM();
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const HomeScreen()),
+                (route) => false,
+              );
+            }),
           ],
         ),
       ),
@@ -590,11 +688,7 @@ class _PauseDialog extends StatelessWidget {
   }
 
   Widget _buildPauseButton(
-    String text,
-    IconData icon,
-    Color color,
-    VoidCallback onTap,
-  ) {
+      String text, IconData icon, Color color, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -610,14 +704,9 @@ class _PauseDialog extends StatelessWidget {
           children: [
             Icon(icon, color: color, size: 22),
             const SizedBox(width: 10),
-            Text(
-              text,
-              style: TextStyle(
-                color: color,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            Text(text,
+                style: TextStyle(
+                    color: color, fontSize: 16, fontWeight: FontWeight.bold)),
           ],
         ),
       ),

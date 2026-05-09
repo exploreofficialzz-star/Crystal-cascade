@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/level.dart';
+import '../utils/constants.dart';
 
 class StorageService {
   static final StorageService _instance = StorageService._internal();
@@ -13,8 +14,8 @@ class StorageService {
     _prefs = await SharedPreferences.getInstance();
   }
 
-  // Coins
-  int getCoins() => _prefs?.getInt('coins') ?? 100;
+  // ─── Coins ────────────────────────────────────────────────────────────────
+  int getCoins() => _prefs?.getInt('coins') ?? GameConstants.startingCoins;
   Future<void> setCoins(int coins) async => await _prefs?.setInt('coins', coins);
   Future<void> addCoins(int amount) async => await setCoins(getCoins() + amount);
   Future<bool> spendCoins(int amount) async {
@@ -26,7 +27,7 @@ class StorageService {
     return false;
   }
 
-  // Lives
+  // ─── Lives ────────────────────────────────────────────────────────────────
   int getLives() => _prefs?.getInt('lives') ?? 5;
   Future<void> setLives(int lives) async => await _prefs?.setInt('lives', lives);
   Future<void> addLife() async {
@@ -44,9 +45,10 @@ class StorageService {
   }
 
   int getLastLifeUsedTime() => _prefs?.getInt('last_life_used') ?? 0;
-  Future<void> setLastLifeUsedTime(int time) async => await _prefs?.setInt('last_life_used', time);
+  Future<void> setLastLifeUsedTime(int time) async =>
+      await _prefs?.setInt('last_life_used', time);
 
-  // Level Progress
+  // ─── Level Progress ───────────────────────────────────────────────────────
   String _levelKey(int levelId) => 'level_$levelId';
 
   Future<void> saveLevelProgress(Level level) async {
@@ -73,18 +75,22 @@ class StorageService {
     }
   }
 
-  // Settings
+  // ─── Settings ─────────────────────────────────────────────────────────────
   bool getSoundEnabled() => _prefs?.getBool('sound_enabled') ?? true;
-  Future<void> setSoundEnabled(bool value) async => await _prefs?.setBool('sound_enabled', value);
+  Future<void> setSoundEnabled(bool value) async =>
+      await _prefs?.setBool('sound_enabled', value);
 
   bool getMusicEnabled() => _prefs?.getBool('music_enabled') ?? true;
-  Future<void> setMusicEnabled(bool value) async => await _prefs?.setBool('music_enabled', value);
+  Future<void> setMusicEnabled(bool value) async =>
+      await _prefs?.setBool('music_enabled', value);
 
   bool getVibrationEnabled() => _prefs?.getBool('vibration_enabled') ?? true;
-  Future<void> setVibrationEnabled(bool value) async => await _prefs?.setBool('vibration_enabled', value);
+  Future<void> setVibrationEnabled(bool value) async =>
+      await _prefs?.setBool('vibration_enabled', value);
 
   int getHighScore() => _prefs?.getInt('high_score') ?? 0;
-  Future<void> setHighScore(int score) async => await _prefs?.setInt('high_score', score);
+  Future<void> setHighScore(int score) async =>
+      await _prefs?.setInt('high_score', score);
 
   int getTotalStars() {
     int total = 0;
@@ -100,14 +106,43 @@ class StorageService {
     return total;
   }
 
-  // Remove Ads Purchase Status
-  bool getRemoveAdsPurchased() => _prefs?.getBool('remove_ads') ?? false;
-  Future<void> setRemoveAdsPurchased(bool value) async => await _prefs?.setBool('remove_ads', value);
+  // ─── Remove Ads — Tiered with Expiry ──────────────────────────────────────
+  //
+  //  Tier strings: 'none' | 'day' | 'weekend' | 'month'
+  //  Expiry is stored as epoch milliseconds.
+  //  isAdsRemoved() returns true only while the timer hasn't expired.
 
-  // Hint Count
-  int getHints() => _prefs?.getInt('hints') ?? 3;
-  Future<void> setHints(int hints) async => await _prefs?.setInt('hints', hints);
+  Future<void> setRemoveAdsTier(String tier, int durationMs) async {
+    final expiry = DateTime.now().millisecondsSinceEpoch + durationMs;
+    await _prefs?.setString('remove_ads_tier', tier);
+    await _prefs?.setInt('remove_ads_expiry', expiry);
+  }
 
-  // Reset All Data
+  bool isAdsRemoved() {
+    final tier = _prefs?.getString('remove_ads_tier') ?? 'none';
+    if (tier == 'none') return false;
+    final expiry = _prefs?.getInt('remove_ads_expiry') ?? 0;
+    return DateTime.now().millisecondsSinceEpoch < expiry;
+  }
+
+  String getRemoveAdsTier() =>
+      _prefs?.getString('remove_ads_tier') ?? 'none';
+
+  int getRemoveAdsExpiry() =>
+      _prefs?.getInt('remove_ads_expiry') ?? 0;
+
+  /// Legacy helper kept for AdMobService compatibility.
+  bool getRemoveAdsPurchased() => isAdsRemoved();
+  Future<void> setRemoveAdsPurchased(bool value) async =>
+      await _prefs?.setBool('remove_ads', value);
+
+  // ─── Hints ────────────────────────────────────────────────────────────────
+  int getHints() => _prefs?.getInt('hints') ?? GameConstants.startingHints;
+  Future<void> setHints(int hints) async =>
+      await _prefs?.setInt('hints', hints);
+  Future<void> addHints(int count) async =>
+      await setHints(getHints() + count);
+
+  // ─── Reset ────────────────────────────────────────────────────────────────
   Future<void> resetAll() async => await _prefs?.clear();
 }

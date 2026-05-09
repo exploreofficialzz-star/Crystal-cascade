@@ -19,16 +19,18 @@ class AdMobService {
   int _rewardedLoadAttempts = 0;
   static const int maxFailedLoadAttempts = 3;
 
-  final StreamController<bool> _rewardStreamController = StreamController<bool>.broadcast();
+  final StreamController<bool> _rewardStreamController =
+      StreamController<bool>.broadcast();
   Stream<bool> get onRewardEarned => _rewardStreamController.stream;
 
-  bool get adsRemoved => _storage.getRemoveAdsPurchased();
+  /// Checks tiered remove-ads expiry — ads show again once the period lapses.
+  bool get adsRemoved => _storage.isAdsRemoved();
 
   Future<void> init() async {
     await MobileAds.instance.initialize();
   }
 
-  // Banner Ad
+  // ─── Banner Ad ────────────────────────────────────────────────────────────
   BannerAd? createBannerAd() {
     if (adsRemoved) return null;
     _bannerAd?.dispose();
@@ -53,7 +55,7 @@ class AdMobService {
     _bannerAd = null;
   }
 
-  // Interstitial Ad
+  // ─── Interstitial Ad ──────────────────────────────────────────────────────
   void loadInterstitialAd() {
     if (adsRemoved) return;
     InterstitialAd.load(
@@ -95,7 +97,7 @@ class AdMobService {
     }
   }
 
-  // Rewarded Ad
+  // ─── Rewarded Ad ──────────────────────────────────────────────────────────
   void loadRewardedAd() {
     RewardedAd.load(
       adUnitId: GameConstants.rewardedAdUnitId,
