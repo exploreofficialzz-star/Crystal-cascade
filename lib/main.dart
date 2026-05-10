@@ -79,8 +79,11 @@ class CrystalCascadeApp extends StatelessWidget {
             bodyMedium: TextStyle(color: Colors.white70),
           ),
         ),
-        // NetworkOverlay wraps every screen — no per-screen wiring needed
-        home: const NetworkOverlay(child: SplashScreen()),
+        // builder: wraps EVERY route including GameScreen, dialogs, etc.
+        // This is the only correct way to block all navigation with an overlay.
+        builder: (context, child) =>
+            NetworkOverlay(child: child ?? const SizedBox.shrink()),
+        home: const SplashScreen(),
       ),
     );
   }
