@@ -43,8 +43,9 @@ class NetworkService {
 
     // Subscribe to OS-level connectivity changes
     _sub = _connectivity.onConnectivityChanged.listen((results) async {
-      // Debounce: wait 800ms for the network stack to settle before pinging
-      await Future.delayed(const Duration(milliseconds: 800));
+      // Debounce: wait 2s for the network stack to settle before pinging.
+      // Short debounces cause flicker on flaky or switching connections.
+      await Future.delayed(const Duration(milliseconds: 2000));
       await _update();
     });
   }
@@ -65,12 +66,24 @@ class NetworkService {
   }
 
   /// Returns true only when we can actually resolve a hostname.
-  /// Uses dart:io — no extra package, no HTTP overhead.
+  /// When recovering from offline, requires TWO successful pings 1 s apart
+  /// to confirm the connection is stable before hiding the overlay.
   Future<bool> _pingInternet() async {
     try {
       final result = await InternetAddress.lookup('google.com')
           .timeout(const Duration(seconds: 5));
-      return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+      if (result.isEmpty || result.first.rawAddress.isEmpty) return false;
+
+      // First ping succeeded — if we were offline, do a second confirmation
+      // ping after 1 s to avoid hiding the overlay on a brief blip.
+      if (_status != NetworkStatus.connected) {
+        await Future.delayed(const Duration(seconds: 1));
+        final result2 = await InternetAddress.lookup('google.com')
+            .timeout(const Duration(seconds: 5));
+        return result2.isNotEmpty && result2.first.rawAddress.isNotEmpty;
+      }
+
+      return true;
     } on SocketException {
       return false;
     } on TimeoutException {
