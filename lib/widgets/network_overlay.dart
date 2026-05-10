@@ -2,11 +2,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/network_service.dart';
 
-/// Wraps any screen and slides a branded offline overlay over it
-/// the moment connectivity is lost. Two distinct messages:
+/// Placed in MaterialApp's builder — covers EVERY screen and route.
 ///
-///   disconnected     → "No internet connection. Enable Wi-Fi or mobile data."
+///   disconnected     → "No internet connection."
 ///   connectedNoData  → "Connected but no internet. Check your plan or Wi-Fi."
+///
+/// The overlay stays permanently until NetworkStatus.connected is confirmed.
+/// It does NOT hide during the 'checking' state to prevent flickering.
 class NetworkOverlay extends StatefulWidget {
   final Widget child;
 
@@ -24,26 +26,27 @@ class _NetworkOverlayState extends State<NetworkOverlay>
 
   late final AnimationController _animCtrl = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 450),
+    duration: const Duration(milliseconds: 350),
   );
-
-  late final Animation<double> _fadeAnim =
-      CurvedAnimation(parent: _animCtrl, curve: Curves.easeInOut);
 
   @override
   void initState() {
     super.initState();
+
     _sub = NetworkService().statusStream.listen((status) {
       setState(() => _status = status);
-      if (!_isOnline(status)) {
+
+      // Only hide when CONFIRMED connected — checking counts as offline
+      if (_isOffline(status)) {
         _animCtrl.forward();
-      } else {
+      } else if (status == NetworkStatus.connected) {
         _animCtrl.reverse();
       }
+      // 'checking' → do nothing, keep overlay visible
     });
 
-    // Show overlay immediately if already offline when screen opens
-    if (!_isOnline(_status)) _animCtrl.value = 1.0;
+    // Show overlay immediately if already offline on first render
+    if (_isOffline(_status)) _animCtrl.value = 1.0;
   }
 
   @override
@@ -53,36 +56,46 @@ class _NetworkOverlayState extends State<NetworkOverlay>
     super.dispose();
   }
 
-  bool _isOnline(NetworkStatus s) =>
-      s == NetworkStatus.connected || s == NetworkStatus.checking;
+  /// Overlay is shown for disconnected AND connectedNoData AND checking.
+  /// Only CONFIRMED connected hides it.
+  bool _isOffline(NetworkStatus s) => s != NetworkStatus.connected;
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        // ── Actual app content ──────────────────────────────────────────────
+        // ── App content (always present underneath) ─────────────────────────
         widget.child,
 
-        // ── Offline overlay (fades in/out) ──────────────────────────────────
-        FadeTransition(
-          opacity: _fadeAnim,
-          child: IgnorePointer(
-            ignoring: _isOnline(_status),
-            child: _OfflineScreen(
-              status: _status,
-              isChecking: _isChecking,
-              onRetry: () async {
-                setState(() => _isChecking = true);
-                await NetworkService().recheck();
-                if (mounted) setState(() => _isChecking = false);
-              },
-            ),
+        // ── Full-screen offline overlay ──────────────────────────────────────
+        AnimatedBuilder(
+          animation: _animCtrl,
+          builder: (context, child) {
+            return Opacity(
+              opacity: _animCtrl.value,
+              child: IgnorePointer(
+                // Block all interaction when visible
+                ignoring: _animCtrl.value == 0,
+                child: child,
+              ),
+            );
+          },
+          child: _OfflineScreen(
+            status: _status,
+            isChecking: _isChecking,
+            onRetry: () async {
+              setState(() => _isChecking = true);
+              await NetworkService().recheck();
+              if (mounted) setState(() => _isChecking = false);
+            },
           ),
         ),
       ],
     );
   }
 }
+
+// ─── Offline Screen ────────────────────────────────────────────────────────────
 
 class _OfflineScreen extends StatelessWidget {
   final NetworkStatus status;
@@ -100,6 +113,8 @@ class _OfflineScreen extends StatelessWidget {
     final isNoData = status == NetworkStatus.connectedNoData;
 
     return Container(
+      width: double.infinity,
+      height: double.infinity,
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -119,7 +134,7 @@ class _OfflineScreen extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // ── Icon ───────────────────────────────────────────────────
+                // ── Icon ─────────────────────────────────────────────────────
                 Container(
                   width: 100,
                   height: 100,
@@ -132,7 +147,9 @@ class _OfflineScreen extends StatelessWidget {
                     ),
                   ),
                   child: Icon(
-                    isNoData ? Icons.signal_wifi_bad : Icons.wifi_off_rounded,
+                    isNoData
+                        ? Icons.signal_wifi_bad
+                        : Icons.wifi_off_rounded,
                     color: isNoData
                         ? Colors.orangeAccent
                         : Colors.redAccent,
@@ -141,7 +158,7 @@ class _OfflineScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 28),
 
-                // ── Title ──────────────────────────────────────────────────
+                // ── Title ─────────────────────────────────────────────────────
                 Text(
                   isNoData
                       ? 'Connected But No Internet'
@@ -150,44 +167,59 @@ class _OfflineScreen extends StatelessWidget {
                     color: Colors.white,
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
+                    decoration: TextDecoration.none, // no underline
                   ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 16),
 
-                // ── Body message ───────────────────────────────────────────
+                // ── Message box ───────────────────────────────────────────────
                 Container(
+                  width: double.infinity,
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 14),
+                      horizontal: 20, vertical: 16),
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.07),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                        color: Colors.white.withOpacity(0.12), width: 1),
-                  ),
-                  child: Text(
-                    isNoData
-                        ? 'Your device is connected to a network, but we can\'t '
-                            'reach the internet.\n\n'
-                            '• Check your mobile data plan\n'
-                            '• Try a different Wi-Fi network\n'
-                            '• Disable and re-enable mobile data'
-                        : 'Crystal Cascade needs an internet connection to load '
-                            'ads and sync your progress.\n\n'
-                            '• Turn on Wi-Fi or mobile data\n'
-                            '• Disable airplane mode\n'
-                            '• Check your SIM card is active',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.75),
-                      fontSize: 14,
-                      height: 1.6,
+                      color: Colors.white.withOpacity(0.12),
+                      width: 1,
                     ),
-                    textAlign: TextAlign.left,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isNoData
+                            ? 'Your device is connected but we can\'t reach the internet.'
+                            : 'Crystal Cascade needs internet to load ads and sync progress.',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.85),
+                          fontSize: 14,
+                          height: 1.5,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ..._buildBullets(
+                        isNoData
+                            ? [
+                                'Check your mobile data plan',
+                                'Try a different Wi-Fi network',
+                                'Disable and re-enable mobile data',
+                              ]
+                            : [
+                                'Turn on Wi-Fi or mobile data',
+                                'Disable airplane mode',
+                                'Check your SIM card is active',
+                              ],
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 32),
 
-                // ── Retry button ───────────────────────────────────────────
+                // ── Retry button ──────────────────────────────────────────────
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -209,6 +241,7 @@ class _OfflineScreen extends StatelessWidget {
                         color: Colors.black,
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
+                        decoration: TextDecoration.none,
                       ),
                     ),
                     style: ElevatedButton.styleFrom(
@@ -225,12 +258,13 @@ class _OfflineScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
 
-                // ── Small footer note ──────────────────────────────────────
+                // ── Footer ────────────────────────────────────────────────────
                 Text(
                   'Your progress is saved locally.\nReconnect to continue playing.',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.35),
                     fontSize: 12,
+                    decoration: TextDecoration.none,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -240,5 +274,38 @@ class _OfflineScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// Bullet points as separate Text widgets — no underlines possible.
+  List<Widget> _buildBullets(List<String> points) {
+    return points.map((point) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '• ',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 14,
+                decoration: TextDecoration.none,
+              ),
+            ),
+            Expanded(
+              child: Text(
+                point,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.6),
+                  fontSize: 14,
+                  height: 1.4,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }).toList();
   }
 }
