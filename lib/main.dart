@@ -6,23 +6,31 @@ import 'providers/settings_provider.dart';
 import 'screens/splash_screen.dart';
 import 'services/admob_service.dart';
 import 'services/audio_service.dart';
+import 'services/network_service.dart';
+import 'services/notification_service.dart';
 import 'services/storage_service.dart';
+import 'widgets/network_overlay.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize services
+  // ── Core services ──────────────────────────────────────────────────────────
   await StorageService().init();
   await AdMobService().init();
   await AudioService().init();
 
-  // Set preferred orientations
+  // ── Notifications ──────────────────────────────────────────────────────────
+  await NotificationService().init();
+
+  // ── Network awareness (starts listening immediately) ───────────────────────
+  await NetworkService().init();
+
+  // ── UI preferences ────────────────────────────────────────────────────────
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
 
-  // Set system UI overlay style
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -56,16 +64,22 @@ class CrystalCascadeApp extends StatelessWidget {
             surface: Color(0xFF1a1a2e),
           ),
           textTheme: const TextTheme(
-            displayLarge: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            displayMedium: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            displaySmall: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            headlineMedium: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-            titleLarge: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+            displayLarge:
+                TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            displayMedium:
+                TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            displaySmall:
+                TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            headlineMedium:
+                TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+            titleLarge:
+                TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
             bodyLarge: TextStyle(color: Colors.white),
             bodyMedium: TextStyle(color: Colors.white70),
           ),
         ),
-        home: const SplashScreen(),
+        // NetworkOverlay wraps every screen — no per-screen wiring needed
+        home: const NetworkOverlay(child: SplashScreen()),
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../models/gem.dart';
 import '../models/level.dart';
+import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/audio_service.dart';
 import '../utils/constants.dart';
@@ -319,7 +320,13 @@ class GameProvider extends ChangeNotifier {
   }
 
   void useLifeAndRestart() async {
-    if (await _storage.useLife()) restartLevel();
+    if (await _storage.useLife()) {
+      restartLevel();
+      final missingLives = 5 - lives;
+      if (missingLives > 0) {
+        NotificationService().scheduleLifeRegen(missingLives);
+      }
+    }
   }
 
   void claimRewardCoins(int amount) async {

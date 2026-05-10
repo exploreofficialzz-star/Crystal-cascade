@@ -5,6 +5,7 @@ import '../providers/game_provider.dart';
 import '../providers/settings_provider.dart';
 import '../services/admob_service.dart';
 import '../services/audio_service.dart';
+import '../services/notification_service.dart';
 import '../utils/constants.dart';
 import '../widgets/ad_banner_widget.dart';
 import 'game_screen.dart';
@@ -20,25 +21,47 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _controller;
 
   @override
   void initState() {
     super.initState();
+
+    // Register lifecycle observer for notification scheduling
+    WidgetsBinding.instance.addObserver(this);
+
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
+
     AudioService().playBGM();
     AdMobService().preloadAds();
     context.read<SettingsProvider>().loadSettings();
+
+    // Cancel any "come back" / flash-sale notifications — player is here now
+    NotificationService().onAppForeground();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     super.dispose();
+  }
+
+  // ── App lifecycle → notification scheduling ───────────────────────────────
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      // App went to background — schedule retention notifications
+      final missingLives = 5 - context.read<GameProvider>().lives;
+      NotificationService().onAppBackground(missingLives: missingLives);
+    } else if (state == AppLifecycleState.resumed) {
+      // Player opened the app — cancel pending retention notifications
+      NotificationService().onAppForeground();
+    }
   }
 
   @override
@@ -72,11 +95,13 @@ class _HomeScreenState extends State<HomeScreen>
                       return Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          // Top Bar - Coins & Lives
+                          // Top Bar — Coins & Lives
                           Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 20),
                             child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
                               children: [
                                 _buildResourceChip(
                                   Icons.monetization_on,
@@ -123,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen>
                             () => _startGame(context),
                           ),
                           const SizedBox(height: 16),
-                          // Level Select Button
+                          // Level Select
                           _buildMainButton(
                             'LEVELS',
                             Icons.grid_view_rounded,
@@ -131,7 +156,7 @@ class _HomeScreenState extends State<HomeScreen>
                             () => _showLevels(context),
                           ),
                           const SizedBox(height: 16),
-                          // Shop Button
+                          // Shop
                           _buildMainButton(
                             'SHOP',
                             Icons.shopping_bag_rounded,
@@ -139,23 +164,21 @@ class _HomeScreenState extends State<HomeScreen>
                             () => _showShop(context),
                           ),
                           const Spacer(),
-                          // Bottom Row - Settings & Stars
+                          // Bottom Row — Settings & Stars
                           Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 10),
                             child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
                               children: [
                                 _buildIconButton(
-                                  Icons.settings,
-                                  () => _showSettings(context),
-                                ),
+                                    Icons.settings,
+                                    () => _showSettings(context)),
                                 Row(
                                   children: [
-                                    const Icon(
-                                      Icons.star,
-                                      color: Colors.amber,
-                                      size: 22,
-                                    ),
+                                    const Icon(Icons.star,
+                                        color: Colors.amber, size: 22),
                                     const SizedBox(width: 4),
                                     Text(
                                       '${game.totalStars}',
@@ -167,10 +190,7 @@ class _HomeScreenState extends State<HomeScreen>
                                     ),
                                   ],
                                 ),
-                                _buildIconButton(
-                                  Icons.share,
-                                  () {},
-                                ),
+                                _buildIconButton(Icons.share, () {}),
                               ],
                             ),
                           ),
@@ -187,6 +207,8 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  // ── Widgets ───────────────────────────────────────────────────────────────
+
   Widget _buildResourceChip(
     IconData icon,
     String value,
@@ -196,14 +218,12 @@ class _HomeScreenState extends State<HomeScreen>
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: Colors.black.withOpacity(0.4),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: color.withOpacity(0.5),
-            width: 1,
-          ),
+          border: Border.all(color: color.withOpacity(0.5), width: 1),
         ),
         child: Row(
           children: [
@@ -238,20 +258,17 @@ class _HomeScreenState extends State<HomeScreen>
             width: 240,
             height: 60,
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  color.withOpacity(0.8),
-                  color.withOpacity(0.6),
-                ],
-              ),
+              gradient: LinearGradient(colors: [
+                color.withOpacity(0.8),
+                color.withOpacity(0.6),
+              ]),
               borderRadius: BorderRadius.circular(30),
               border: Border.all(
-                color: Colors.white.withOpacity(0.3),
-                width: 1.5,
-              ),
+                  color: Colors.white.withOpacity(0.3), width: 1.5),
               boxShadow: [
                 BoxShadow(
-                  color: color.withOpacity(0.3 + _controller.value * 0.2),
+                  color: color
+                      .withOpacity(0.3 + _controller.value * 0.2),
                   blurRadius: 20,
                   spreadRadius: 2,
                 ),
@@ -289,14 +306,14 @@ class _HomeScreenState extends State<HomeScreen>
           color: Colors.black.withOpacity(0.4),
           shape: BoxShape.circle,
           border: Border.all(
-            color: Colors.white.withOpacity(0.2),
-            width: 1,
-          ),
+              color: Colors.white.withOpacity(0.2), width: 1),
         ),
         child: Icon(icon, color: Colors.white, size: 24),
       ),
     );
   }
+
+  // ── Navigation ─────────────────────────────────────────────────────────────
 
   void _startGame(BuildContext context) {
     final game = context.read<GameProvider>();
@@ -311,20 +328,17 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _showLevels(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const LevelSelectScreen()),
-    );
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const LevelSelectScreen()));
   }
 
   void _showShop(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const ShopScreen()),
-    );
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const ShopScreen()));
   }
 
   void _showSettings(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-    );
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
 }

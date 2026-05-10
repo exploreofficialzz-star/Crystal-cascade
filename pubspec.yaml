@@ -9,16 +9,33 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
+  # Ads
   google_mobile_ads: ^5.1.0
+
+  # Audio
   audioplayers: ^6.0.0
+
+  # Storage
   shared_preferences: ^2.2.2
+
+  # State management
   provider: ^6.1.1
+
+  # UI extras
   cupertino_icons: ^1.0.6
   flutter_animate: ^4.5.0
   confetti: ^0.8.0
   shimmer: ^3.0.0
   path_provider: ^2.1.2
 
+  # ─── NEW ───────────────────────────────────────────────────────────────────
+  # Push / local notifications
+  flutter_local_notifications: ^17.2.0
+  timezone: ^0.9.4
+
+  # Network awareness
+  connectivity_plus: ^6.0.5
 
 dev_dependencies:
   flutter_test:
