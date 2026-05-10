@@ -19,8 +19,9 @@ void main() async {
   await AdMobService().init();
   await AudioService().init();
 
-  // ── Notifications ──────────────────────────────────────────────────────────
-  await NotificationService().init();
+  // ── Notifications (non-blocking — must not delay Flutter rendering) ──────────
+  // Do NOT await: permission dialogs and scheduling run after the app is visible
+  NotificationService().init();
 
   // ── Network awareness (starts listening immediately) ───────────────────────
   await NetworkService().init();
