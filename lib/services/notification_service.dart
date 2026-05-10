@@ -51,7 +51,8 @@ class NotificationService {
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     await android?.requestNotificationsPermission();
-    await android?.requestExactAlarmsPermission();
+    // NOTE: USE_EXACT_ALARM in AndroidManifest.xml handles exact alarm permission
+    // automatically on Android 12+ without a user prompt. No runtime request needed.
 
     _initialized = true;
 
