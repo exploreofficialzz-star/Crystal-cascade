@@ -11,38 +11,36 @@ class AudioService {
   final StorageService _storage = StorageService();
 
   bool _initialized = false;
+  bool _bgmActive = false; // tracks whether BGM should be playing
 
   Future<void> init() async {
     if (_initialized) return;
 
-    // ── BGM player: loop forever, allow mixing with other audio ──────────────
-    // AudioContextConfig.mixWithOthers = true means this player does NOT steal
-    // audio focus from other players — SFX and BGM coexist peacefully.
+    // BGM: use 'gain' so the OS audio focus is properly released when
+    // the app goes to background — this works together with the
+    // AppLifecycleState observer in main.dart to fully stop music on minimize.
     await _bgmPlayer.setAudioContext(
       AudioContext(
         android: const AudioContextAndroid(
           contentType: AndroidContentType.music,
           usageType: AndroidUsageType.game,
-          // GAIN_TRANSIENT_MAY_DUCK: BGM stays playing, just ducks briefly for SFX
-          audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+          audioFocus: AndroidAudioFocus.gain,
           isSpeakerphoneOn: false,
           stayAwake: false,
         ),
         iOS: AudioContextIOS(
           category: AVAudioSessionCategory.ambient,
-          // mixWithOthers: BGM won't interrupt other app audio and vice versa
           options: const {AVAudioSessionOptions.mixWithOthers},
         ),
       ),
     );
 
-    // ── SFX player: short sounds, must NOT steal focus from BGM ──────────────
+    // SFX: transient focus — grabs focus briefly then releases back to BGM
     await _sfxPlayer.setAudioContext(
       AudioContext(
         android: const AudioContextAndroid(
           contentType: AndroidContentType.sonification,
           usageType: AndroidUsageType.game,
-          // GAIN_TRANSIENT: takes focus very briefly then releases it back to BGM
           audioFocus: AndroidAudioFocus.gainTransient,
           isSpeakerphoneOn: false,
           stayAwake: false,
@@ -64,6 +62,7 @@ class AudioService {
   Future<void> playBGM() async {
     if (!_storage.getMusicEnabled()) return;
     if (!_initialized) await init();
+    _bgmActive = true;
     try {
       await _bgmPlayer.stop();
       await _bgmPlayer.play(AssetSource('sounds/bg_music.mp3'));
@@ -71,29 +70,26 @@ class AudioService {
   }
 
   Future<void> stopBGM() async {
-    try {
-      await _bgmPlayer.stop();
-    } catch (_) {}
+    _bgmActive = false;
+    try { await _bgmPlayer.stop(); } catch (_) {}
   }
 
   Future<void> pauseBGM() async {
-    try {
-      await _bgmPlayer.pause();
-    } catch (_) {}
+    try { await _bgmPlayer.pause(); } catch (_) {}
   }
 
+  /// Only resumes if music was actively playing — won't restart from shop/settings
   Future<void> resumeBGM() async {
+    if (!_bgmActive) return;
     if (!_storage.getMusicEnabled()) return;
-    try {
-      await _bgmPlayer.resume();
-    } catch (_) {}
+    try { await _bgmPlayer.resume(); } catch (_) {}
   }
 
-  Future<void> playTap() async => await _playSfx('sounds/tap.mp3');
-  Future<void> playMatch() async => await _playSfx('sounds/match.mp3');
-  Future<void> playVictory() async => await _playSfx('sounds/victory.mp3');
-  Future<void> playGameOver() async => await _playSfx('sounds/gameover.mp3');
-  Future<void> playCoin() async => await _playSfx('sounds/coin.mp3');
+  Future<void> playTap()      async => _playSfx('sounds/tap.mp3');
+  Future<void> playMatch()    async => _playSfx('sounds/match.mp3');
+  Future<void> playVictory()  async => _playSfx('sounds/victory.mp3');
+  Future<void> playGameOver() async => _playSfx('sounds/gameover.mp3');
+  Future<void> playCoin()     async => _playSfx('sounds/coin.mp3');
 
   Future<void> _playSfx(String path) async {
     if (!_storage.getSoundEnabled()) return;

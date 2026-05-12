@@ -37,6 +37,9 @@ dependencies:
   # Network awareness
   connectivity_plus: ^6.0.5
 
+  # In-App Purchases (real store transactions)
+  in_app_purchase: ^3.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -4,11 +4,14 @@ import 'package:provider/provider.dart';
 import 'providers/game_provider.dart';
 import 'providers/settings_provider.dart';
 import 'screens/splash_screen.dart';
+import 'services/adblock_service.dart';
 import 'services/admob_service.dart';
 import 'services/audio_service.dart';
+import 'services/iap_service.dart';
 import 'services/network_service.dart';
 import 'services/notification_service.dart';
 import 'services/storage_service.dart';
+import 'widgets/adblock_overlay.dart';
 import 'widgets/network_overlay.dart';
 
 void main() async {
@@ -19,19 +22,23 @@ void main() async {
   await AdMobService().init();
   await AudioService().init();
 
-  // ── Notifications (non-blocking — must not delay Flutter rendering) ──────────
-  // Do NOT await: permission dialogs and scheduling run after the app is visible
+  // ── Notifications (non-blocking) ───────────────────────────────────────────
   NotificationService().init();
 
-  // ── Network awareness (starts listening immediately) ───────────────────────
+  // ── Network awareness ──────────────────────────────────────────────────────
   await NetworkService().init();
+
+  // ── In-App Purchases (non-blocking) ───────────────────────────────────────
+  IAPService().init();
+
+  // ── Ad-block detection ────────────────────────────────────────────────────
+  AdBlockService().init();
 
   // ── UI preferences ────────────────────────────────────────────────────────
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
-
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -44,8 +51,45 @@ void main() async {
   runApp(const CrystalCascadeApp());
 }
 
-class CrystalCascadeApp extends StatelessWidget {
+// ── Stateful so we can observe app lifecycle globally ─────────────────────────
+// This is the ONLY place BGM pause/resume is handled — no per-screen conflicts.
+class CrystalCascadeApp extends StatefulWidget {
   const CrystalCascadeApp({super.key});
+  @override
+  State<CrystalCascadeApp> createState() => _CrystalCascadeAppState();
+}
+
+class _CrystalCascadeAppState extends State<CrystalCascadeApp>
+    with WidgetsBindingObserver {
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Fires for EVERY screen — home, game, game over, shop, etc.
+  /// Eliminates the gap where BGM kept playing on GameOverScreen exit.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:   // Android 14+ / iOS 13+
+        AudioService().pauseBGM();
+      case AppLifecycleState.resumed:
+        AudioService().resumeBGM();
+      case AppLifecycleState.inactive:
+        // inactive fires on dialogs/notifications — don't pause here
+        break;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -79,10 +123,11 @@ class CrystalCascadeApp extends StatelessWidget {
             bodyMedium: TextStyle(color: Colors.white70),
           ),
         ),
-        // builder: wraps EVERY route including GameScreen, dialogs, etc.
-        // This is the only correct way to block all navigation with an overlay.
-        builder: (context, child) =>
-            NetworkOverlay(child: child ?? const SizedBox.shrink()),
+        builder: (context, child) => NetworkOverlay(
+          child: AdBlockOverlay(
+            child: child ?? const SizedBox.shrink(),
+          ),
+        ),
         home: const SplashScreen(),
       ),
     );
