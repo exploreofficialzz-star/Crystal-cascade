@@ -1,99 +1,51 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/adblock_service.dart';
 import '../screens/shop_screen.dart';
 
-/// Placed in MaterialApp's builder alongside NetworkOverlay.
-/// Blocks the app with a branded wall when an ad blocker is detected
-/// and the user has not purchased an ad-free pass.
-class AdBlockOverlay extends StatefulWidget {
+/// Uses ValueListenableBuilder — reads ValueNotifier directly.
+/// Can NEVER miss a status update, no stream subscriptions needed.
+class AdBlockOverlay extends StatelessWidget {
   final Widget child;
   const AdBlockOverlay({required this.child, super.key});
 
   @override
-  State<AdBlockOverlay> createState() => _AdBlockOverlayState();
-}
-
-class _AdBlockOverlayState extends State<AdBlockOverlay>
-    with SingleTickerProviderStateMixin {
-  late StreamSubscription<AdBlockStatus> _sub;
-  bool _show = false;
-  bool _isChecking = false;
-
-  late final AnimationController _anim = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 400),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-
-    // Reflect current status immediately
-    _updateShow(AdBlockService().shouldShowAdBlockWall);
-
-    _sub = AdBlockService().statusStream.listen((status) {
-      _updateShow(AdBlockService().shouldShowAdBlockWall);
-    });
-  }
-
-  void _updateShow(bool show) {
-    if (!mounted) return;
-    setState(() => _show = show);
-    show ? _anim.forward() : _anim.reverse();
-  }
-
-  @override
-  void dispose() {
-    _sub.cancel();
-    _anim.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        widget.child,
-        AnimatedBuilder(
-          animation: _anim,
-          builder: (context, child) => Opacity(
-            opacity: _anim.value,
-            child: IgnorePointer(ignoring: !_show, child: child),
-          ),
-          child: _AdBlockScreen(
-            isChecking: _isChecking,
-            onRecheck: () async {
-              setState(() => _isChecking = true);
-              await AdBlockService().recheck();
-              if (mounted) setState(() => _isChecking = false);
-            },
-            onGoAdFree: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const ShopScreen(scrollToRemoveAds: true),
+    return ValueListenableBuilder<AdBlockStatus>(
+      valueListenable: AdBlockService().statusNotifier,
+      builder: (context, status, _) {
+        final show = AdBlockService().shouldShowAdBlockWall;
+
+        return Stack(
+          children: [
+            child,
+            if (show)
+              _AdBlockWall(
+                onRecheck: () => AdBlockService().recheck(),
+                onGoAdFree: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const ShopScreen(scrollToRemoveAds: true),
+                  ),
                 ),
-              );
-            },
-          ),
-        ),
-      ],
+              ),
+          ],
+        );
+      },
     );
   }
 }
 
-// ─── The wall UI ──────────────────────────────────────────────────────────────
-
-class _AdBlockScreen extends StatelessWidget {
-  final bool isChecking;
-  final VoidCallback onRecheck;
+class _AdBlockWall extends StatefulWidget {
+  final Future<void> Function() onRecheck;
   final VoidCallback onGoAdFree;
 
-  const _AdBlockScreen({
-    required this.isChecking,
-    required this.onRecheck,
-    required this.onGoAdFree,
-  });
+  const _AdBlockWall({required this.onRecheck, required this.onGoAdFree});
+
+  @override
+  State<_AdBlockWall> createState() => _AdBlockWallState();
+}
+
+class _AdBlockWallState extends State<_AdBlockWall> {
+  bool _checking = false;
 
   @override
   Widget build(BuildContext context) {
@@ -119,7 +71,7 @@ class _AdBlockScreen extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // ── Icon ───────────────────────────────────────────────────
+                // Icon
                 Container(
                   width: 100,
                   height: 100,
@@ -127,19 +79,14 @@ class _AdBlockScreen extends StatelessWidget {
                     shape: BoxShape.circle,
                     color: Colors.redAccent.withOpacity(0.12),
                     border: Border.all(
-                      color: Colors.redAccent.withOpacity(0.4),
-                      width: 1.5,
-                    ),
+                        color: Colors.redAccent.withOpacity(0.4), width: 1.5),
                   ),
-                  child: const Icon(
-                    Icons.block,
-                    color: Colors.redAccent,
-                    size: 52,
-                  ),
+                  child: const Icon(Icons.block,
+                      color: Colors.redAccent, size: 52),
                 ),
                 const SizedBox(height: 28),
 
-                // ── Title ─────────────────────────────────────────────────
+                // Title
                 const Text(
                   'Ad Blocker Detected',
                   style: TextStyle(
@@ -152,7 +99,7 @@ class _AdBlockScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 14),
 
-                // ── Body ──────────────────────────────────────────────────
+                // Body
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -163,40 +110,44 @@ class _AdBlockScreen extends StatelessWidget {
                     border: Border.all(
                         color: Colors.white.withOpacity(0.12), width: 1),
                   ),
-                  child: Column(
-                    children: [
-                      Text(
-                        'Crystal Cascade is free to play because of ads. '
-                        'Your ad blocker is preventing ads from loading.',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.85),
-                          fontSize: 14,
-                          height: 1.5,
-                          decoration: TextDecoration.none,
-                        ),
-                        textAlign: TextAlign.center,
+                  child: Column(children: [
+                    Text(
+                      'Crystal Cascade is free because of ads. '
+                      'Your ad blocker is preventing ads from loading.',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.85),
+                        fontSize: 14,
+                        height: 1.5,
+                        decoration: TextDecoration.none,
                       ),
-                      const SizedBox(height: 14),
-                      Text(
-                        'Please choose one of the options below to continue:',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.55),
-                          fontSize: 13,
-                          decoration: TextDecoration.none,
-                        ),
-                        textAlign: TextAlign.center,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Please disable your ad blocker or go ad-free below.',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.55),
+                        fontSize: 13,
+                        decoration: TextDecoration.none,
                       ),
-                    ],
-                  ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ]),
                 ),
                 const SizedBox(height: 28),
 
-                // ── Option 1: Disable ad blocker ──────────────────────────
+                // Button 1: Disable blocker
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: isChecking ? null : onRecheck,
-                    icon: isChecking
+                    onPressed: _checking
+                        ? null
+                        : () async {
+                            setState(() => _checking = true);
+                            await widget.onRecheck();
+                            if (mounted) setState(() => _checking = false);
+                          },
+                    icon: _checking
                         ? const SizedBox(
                             width: 18,
                             height: 18,
@@ -206,9 +157,7 @@ class _AdBlockScreen extends StatelessWidget {
                         : const Icon(Icons.refresh_rounded,
                             color: Colors.black),
                     label: Text(
-                      isChecking
-                          ? 'Checking…'
-                          : 'I\'ve Disabled My Ad Blocker',
+                      _checking ? 'Checking…' : "I've Disabled My Ad Blocker",
                       style: const TextStyle(
                         color: Colors.black,
                         fontSize: 15,
@@ -227,11 +176,11 @@ class _AdBlockScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
 
-                // ── Option 2: Go Ad-Free ───────────────────────────────────
+                // Button 2: Go ad-free
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: onGoAdFree,
+                    onPressed: widget.onGoAdFree,
                     icon: const Icon(Icons.star, color: Colors.white),
                     label: const Text(
                       'Go Ad-Free  —  from \$0.99',
@@ -252,11 +201,10 @@ class _AdBlockScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 20),
 
-                // ── How to disable tip ────────────────────────────────────
+                // Tip
                 Text(
-                  'Tip: Open your VPN or ad-blocker app,\n'
-                  'disable it for Crystal Cascade, then tap\n'
-                  '"I\'ve Disabled My Ad Blocker" above.',
+                  'Tip: Disable your VPN or ad-blocker app,\n'
+                  'then tap "I\'ve Disabled My Ad Blocker".',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.35),
                     fontSize: 12,

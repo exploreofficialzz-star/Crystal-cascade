@@ -6,19 +6,23 @@ import 'storage_service.dart';
 
 enum AdBlockStatus { unknown, clear, blocked }
 
-/// Multi-layer ad-block detector covering all 5 major blocking methods:
+/// Three-layer ad-block detector. Uses ValueNotifier so the overlay
+/// NEVER misses a status change — no broadcast stream race conditions.
 ///
-///  Layer 1 — DNS resolution  → catches Private DNS, Pi-hole, AdGuard DNS,
-///                               hosts-file blockers, NextDNS
-///  Layer 2 — HTTP reachability → catches VPN-based blockers (Blokada,
-///                               AdGuard VPN, NordVPN Threat Protection)
-///                               that pass DNS but drop HTTP packets
-///  Layer 3 — Periodic re-check → catches users who enable their
-///                               VPN/blocker mid-session
+///  Layer 1 — DNS resolution  (4 domains in parallel)
+///            Catches: Private DNS, Pi-hole, AdGuard DNS, hosts file
 ///
-///  Decision logic (deliberately strict to avoid false positives):
-///    blocked = (dns_failures >= 2 out of 4 domains)
-///           OR (http_unreachable AND dns_failures >= 1)
+///  Layer 2 — TCP socket connect (ALWAYS runs, not gated on DNS)
+///            Catches: VPN-based blockers (Blokada, AdGuard VPN,
+///            NordVPN Threat Protection) that pass DNS but block TCP
+///
+///  Layer 3 — Periodic re-check every 60 s + AdMob callback trigger
+///            Catches: blocker enabled mid-session
+///
+///  Decision (avoids false positives):
+///    blocked = (dns_failures >= 2)
+///           OR (dns_failures >= 1 AND tcp_failures >= 1)
+///           OR (tcp_failures >= 2)   ← VPN with clean DNS
 class AdBlockService {
   static final AdBlockService _instance = AdBlockService._internal();
   factory AdBlockService() => _instance;
@@ -28,153 +32,137 @@ class AdBlockService {
   final StorageService _storage = StorageService();
 
   AdBlockStatus _status = AdBlockStatus.unknown;
-  final StreamController<AdBlockStatus> _ctrl =
-      StreamController<AdBlockStatus>.broadcast();
+
+  /// ValueNotifier — overlay reads this directly, never misses an update.
+  final ValueNotifier<AdBlockStatus> statusNotifier =
+      ValueNotifier<AdBlockStatus>(AdBlockStatus.unknown);
 
   Timer? _periodicTimer;
+  bool _checking = false;
 
   AdBlockStatus get status => _status;
-  Stream<AdBlockStatus> get statusStream => _ctrl.stream;
 
-  /// Show wall only when: blocker active AND user has NOT paid to remove ads.
+  /// True when blocker active AND user has not paid to remove ads.
   bool get shouldShowAdBlockWall =>
       _status == AdBlockStatus.blocked && !_storage.isAdsRemoved();
 
-  // ─── Ad domains for DNS layer ─────────────────────────────────────────────
-  // 4 different Google Ad-serving domains — blockers must hit all of them
-  // to avoid false positives from single-domain CDN issues.
-  static const List<String> _adDomains = [
-    'googleads.g.doubleclick.net',    // Primary AdMob delivery
-    'pagead2.googlesyndication.com',  // AdSense / AdMob
-    'admob.com',                      // AdMob root
-    'www.googleadservices.com',       // Google Ad Services
+  // ─── Ad domains ───────────────────────────────────────────────────────────
+  static const List<String> _dnsDomains = [
+    'googleads.g.doubleclick.net',
+    'pagead2.googlesyndication.com',
+    'admob.com',
+    'www.googleadservices.com',
   ];
 
-  // HTTP endpoint for Layer 2 (VPN detection)
-  static const String _adHttpEndpoint =
-      'https://googleads.g.doubleclick.net/';
+  // TCP targets — port 443. VPN blockers drop the SYN packet here.
+  static const List<String> _tcpHosts = [
+    'googleads.g.doubleclick.net',
+    'pagead2.googlesyndication.com',
+  ];
 
   // ─── Init ─────────────────────────────────────────────────────────────────
   Future<void> init() async {
-    // Wait for internet before first check — avoids false positive on cold start
-    await Future.delayed(const Duration(seconds: 3));
+    // Small delay so the app fully renders before blocking the screen
+    await Future.delayed(const Duration(seconds: 2));
 
     if (_network.isOnline) await _runFullCheck();
 
-    // Re-check whenever connectivity changes
-    _network.statusStream.listen((status) async {
-      if (status == NetworkStatus.connected) await _runFullCheck();
+    // Re-check on every confirmed reconnect
+    _network.statusStream.listen((s) async {
+      if (s == NetworkStatus.connected) await _runFullCheck();
     });
 
-    // Periodic check every 90 seconds — catches mid-session VPN enable
+    // Periodic — catches VPN enabled mid-session
     _periodicTimer = Timer.periodic(
-      const Duration(seconds: 90),
+      const Duration(seconds: 60),
       (_) async {
         if (_network.isOnline) await _runFullCheck();
       },
     );
   }
 
-  /// Manual re-check — called by "I've Disabled My Ad Blocker" button.
+  /// Called by AdMob callbacks and the overlay's "I've disabled" button.
   Future<void> recheck() async {
-    if (!_network.isOnline) return;
-    await _runFullCheck();
+    if (_network.isOnline) await _runFullCheck();
   }
 
-  // ─── Full multi-layer check ───────────────────────────────────────────────
+  // ─── Main detection ───────────────────────────────────────────────────────
   Future<void> _runFullCheck() async {
+    if (_checking) return; // prevent overlapping checks
     if (!_network.isOnline) return;
+    _checking = true;
 
-    // Layer 1: DNS (runs all 4 in parallel for speed)
-    final dnsResults = await Future.wait(
-      _adDomains.map((domain) => _dnsLookup(domain)),
-    );
-    final dnsFailures = dnsResults.where((r) => !r).length;
-    debugPrint('[AdBlock] DNS: $dnsFailures/${_adDomains.length} domains blocked');
+    try {
+      // Layer 1: DNS (all 4 in parallel)
+      final dnsResults = await Future.wait(
+        _dnsDomains.map(_dnsLookup),
+      );
+      final dnsFailures = dnsResults.where((ok) => !ok).length;
 
-    // Layer 2: HTTP reachability (only if DNS is suspicious OR as second check)
-    // Skip HTTP check if DNS is clearly fine (0 failures) to save battery
-    bool httpBlocked = false;
-    if (dnsFailures >= 1) {
-      httpBlocked = !(await _httpReachable());
-      debugPrint('[AdBlock] HTTP blocked: $httpBlocked');
+      // Layer 2: TCP socket (ALWAYS runs — catches VPN blockers with clean DNS)
+      final tcpResults = await Future.wait(
+        _tcpHosts.map((h) => _tcpConnect(h, 443)),
+      );
+      final tcpFailures = tcpResults.where((ok) => !ok).length;
+
+      debugPrint(
+          '[AdBlock] DNS failures: $dnsFailures/${_dnsDomains.length}  '
+          'TCP failures: $tcpFailures/${_tcpHosts.length}');
+
+      final blocked = (dnsFailures >= 2) ||
+          (dnsFailures >= 1 && tcpFailures >= 1) ||
+          (tcpFailures >= 2);
+
+      _emit(blocked ? AdBlockStatus.blocked : AdBlockStatus.clear);
+    } finally {
+      _checking = false;
     }
-
-    // Decision — strict logic to minimize false positives
-    final bool blocked = (dnsFailures >= 2) || (dnsFailures >= 1 && httpBlocked);
-
-    _emit(blocked ? AdBlockStatus.blocked : AdBlockStatus.clear);
   }
 
-  // ─── Layer 1: DNS lookup ──────────────────────────────────────────────────
+  // ─── Layer 1: DNS ─────────────────────────────────────────────────────────
   Future<bool> _dnsLookup(String host) async {
     try {
-      final result = await InternetAddress.lookup(host)
+      final r = await InternetAddress.lookup(host)
           .timeout(const Duration(seconds: 5));
-      final reachable = result.isNotEmpty && result.first.rawAddress.isNotEmpty;
-      if (!reachable) debugPrint('[AdBlock] DNS blocked: $host');
-      return reachable;
-    } on SocketException {
-      debugPrint('[AdBlock] DNS blocked (SocketException): $host');
-      return false;
-    } on TimeoutException {
-      debugPrint('[AdBlock] DNS timeout: $host');
-      return false;
-    } catch (e) {
-      debugPrint('[AdBlock] DNS error ($host): $e');
+      return r.isNotEmpty && r.first.rawAddress.isNotEmpty;
+    } catch (_) {
       return false;
     }
   }
 
-  // ─── Layer 2: HTTP reachability ───────────────────────────────────────────
-  // Makes a real HTTP HEAD request to an AdMob endpoint.
-  // VPN-based blockers (Blokada, AdGuard) pass DNS but DROP the TCP connection.
-  // Even a 4xx/5xx response counts as "reachable" — just 0 bytes proves no block.
-  Future<bool> _httpReachable() async {
-    HttpClient? client;
+  // ─── Layer 2: TCP socket ──────────────────────────────────────────────────
+  /// Tries to open a TCP connection. VPN/DNS-over-HTTPS blockers drop this.
+  /// Any successful TCP handshake (even if TLS fails after) = not blocked.
+  Future<bool> _tcpConnect(String host, int port) async {
+    Socket? socket;
     try {
-      client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 6)
-        ..badCertificateCallback = (_, __, ___) => true; // ignore cert issues
-
-      final request = await client
-          .headUrl(Uri.parse(_adHttpEndpoint))
-          .timeout(const Duration(seconds: 6));
-
-      request.headers.set('User-Agent', 'CrystalCascade/1.0');
-      final response = await request.close().timeout(const Duration(seconds: 6));
-      await response.drain<void>(); // consume response body
-
-      debugPrint('[AdBlock] HTTP reachable: ${response.statusCode}');
-      return true; // any HTTP response = not blocked by VPN
+      socket = await Socket.connect(
+        host,
+        port,
+        timeout: const Duration(seconds: 5),
+      );
+      return true;
     } on SocketException {
-      debugPrint('[AdBlock] HTTP blocked (SocketException) — VPN blocker likely');
       return false;
     } on TimeoutException {
-      debugPrint('[AdBlock] HTTP timeout — possible VPN blocker');
       return false;
-    } on HandshakeException {
-      // TLS handshake failure — HTTPS filtering or cert injection by blocker
-      debugPrint('[AdBlock] HTTP TLS failure — HTTPS filtering detected');
-      return false;
-    } catch (e) {
-      debugPrint('[AdBlock] HTTP error: $e');
+    } catch (_) {
       return false;
     } finally {
-      client?.close(force: true);
+      socket?.destroy();
     }
   }
 
-  // ─── Emit new status ──────────────────────────────────────────────────────
+  // ─── Emit ─────────────────────────────────────────────────────────────────
   void _emit(AdBlockStatus newStatus) {
     if (_status == newStatus) return;
     _status = newStatus;
-    _ctrl.add(_status);
-    debugPrint('[AdBlock] Status → $_status');
+    statusNotifier.value = newStatus; // overlay picks this up instantly
+    debugPrint('[AdBlock] → $newStatus');
   }
 
   void dispose() {
     _periodicTimer?.cancel();
-    _ctrl.close();
+    statusNotifier.dispose();
   }
 }
