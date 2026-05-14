@@ -7,8 +7,6 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
-# FIX: Explicit permissions required — without contents:write the default
-# GITHUB_TOKEN cannot create releases, resulting in a 403 error.
 permissions:
   contents: write
 
@@ -47,7 +45,8 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/release-key.jks
 
-      - name: Build APK
+      - name: Build APK (split per ABI)
+        if: github.event_name != 'pull_request'
         env:
           KEYSTORE_PATH: release-key.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -56,6 +55,7 @@ jobs:
         run: flutter build apk --release --split-per-abi --flavor production
 
       - name: Build App Bundle (AAB)
+        if: github.event_name != 'pull_request'
         env:
           KEYSTORE_PATH: release-key.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -64,6 +64,7 @@ jobs:
         run: flutter build appbundle --release --flavor production
 
       - name: Upload APK Artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
@@ -71,13 +72,14 @@ jobs:
           retention-days: 30
 
       - name: Upload AAB Artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: android-app-bundle
           path: build/app/outputs/bundle/productionRelease/*.aab
           retention-days: 30
 
-      - name: Create Release
+      - name: Create GitHub Release
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
@@ -85,10 +87,20 @@ jobs:
             build/app/outputs/flutter-apk/*.apk
             build/app/outputs/bundle/productionRelease/*.aab
           tag_name: v${{ github.run_number }}
-          name: Release v${{ github.run_number }}
+          name: Crystal Cascade v${{ github.run_number }}
           body: |
-            Crystal Cascade - Android Release
-            - APK for direct installation
-            - AAB for Play Store upload
+            ## Crystal Cascade — Android Release v${{ github.run_number }}
+
+            ### Downloads
+            - **APK** — Direct install (arm64, armeabi-v7a, x86_64)
+            - **AAB** — Upload this to Google Play Store
+
+            ### What's in this build
+            - Real AdMob production IDs wired (Banner, Interstitial, Rewarded, Rewarded Interstitial, Native)
+            - In-App Purchase integration (day/weekend/month remove-ads + hint packs + coin packs)
+            - Network awareness overlay (offline + connected-but-no-data)
+            - Ad-block detection wall
+            - Push notifications (daily bonus, life regen, flash sale, come-back)
+            - Global BGM lifecycle handling
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
