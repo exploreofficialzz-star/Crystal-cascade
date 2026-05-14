@@ -21,7 +21,7 @@ class GameScreen extends StatefulWidget {
 class _GameScreenState extends State<GameScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pulseController;
-  StreamSubscription<bool>? _rewardSubscription;
+  StreamSubscription<String>? _rewardSubscription;
 
   @override
   void initState() {
