@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import '../utils/constants.dart';
+import 'adblock_service.dart';
 import 'storage_service.dart';
 
 class AdMobService {
@@ -67,8 +68,10 @@ class AdMobService {
       listener: BannerAdListener(
         onAdLoaded: (_) => debugPrint('[Ad] Banner loaded'),
         onAdFailedToLoad: (ad, error) {
-          debugPrint('[Ad] Banner failed: ${error.message}');
+          debugPrint('[Ad] Banner failed: ${error.message} (code ${error.code})');
           ad.dispose();
+          // Error code 2 = network error — likely ad blocker
+          if (error.code == 2) AdBlockService().recheck();
         },
       ),
     );
@@ -106,7 +109,8 @@ class AdMobService {
           );
         },
         onAdFailedToLoad: (error) {
-          debugPrint('[Ad] Interstitial load failed: ${error.message}');
+          debugPrint('[Ad] Interstitial load failed: ${error.message} (code ${error.code})');
+          if (error.code == 2) AdBlockService().recheck();
           if (_interstitialRetries < _maxRetries) {
             _interstitialRetries++;
             Future.delayed(Duration(seconds: _interstitialRetries * 2),
@@ -164,7 +168,8 @@ class AdMobService {
           );
         },
         onAdFailedToLoad: (error) {
-          debugPrint('[Ad] Rewarded load failed: ${error.message}');
+          debugPrint('[Ad] Rewarded load failed: ${error.message} (code ${error.code})');
+          if (error.code == 2) AdBlockService().recheck();
           if (_rewardedRetries < _maxRetries) {
             _rewardedRetries++;
             Future.delayed(Duration(seconds: _rewardedRetries * 2),
