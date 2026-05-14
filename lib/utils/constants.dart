@@ -2,30 +2,50 @@ import '../models/gem.dart';
 import '../models/level.dart';
 
 class GameConstants {
-  static const String appName = 'Crystal Cascade';
-  static const String appVersion = '1.0.0';
+  static const String appName      = 'Crystal Cascade';
+  static const String appVersion   = '1.0.0';
   static const String developerTag = 'by chAs';
-  static const String packageName = 'com.chastechgroup.crystalcascade';
+  static const String packageName  = 'com.chastechgroup.crystalcascade';
 
-  // AdMob Test IDs - Replace with production IDs before release
-  static const String bannerAdUnitId = 'ca-app-pub-3940256099942544/6300978111';
-  static const String interstitialAdUnitId = 'ca-app-pub-3940256099942544/1033173712';
-  static const String rewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
+  // ─── PRODUCTION AdMob IDs ──────────────────────────────────────────────────
+  static const String admobAppId =
+      'ca-app-pub-2492078126313994~1061290053';
 
-  // ─── Coin Economy (tightened to drive ad views & purchases) ───────────────
-  static const int coinsPerStar = 2;           // was 10 — per 3-gem match
-  static const int coinsPerLevelComplete = 5;  // was 20 — flat level reward
-  static const int hintCost = 40;              // coins to buy 1 hint
-  static const int extraMovesCost = 30;        // coins for +5 moves
-  static const int startingCoins = 25;         // was 100
-  static const int startingHints = 1;          // was 3
+  static const String bannerAdUnitId =
+      'ca-app-pub-2492078126313994/2061480722';
 
-  // ─── Gameplay Constants ────────────────────────────────────────────────────
-  static const int maxLives = 5;
-  static const int lifeRegenMinutes = 30;
-  static const int extraTubeCost = 100;
+  static const String interstitialAdUnitId =
+      'ca-app-pub-2492078126313994/4548648504';
 
-  // ─── Remove Ads — Tiered Pricing ──────────────────────────────────────────
+  static const String rewardedInterstitialAdUnitId =
+      'ca-app-pub-2492078126313994/8978848108';
+
+  static const String rewardedAdUnitId =
+      'ca-app-pub-2492078126313994/4998635250';
+
+  static const String nativeAdUnitId =
+      'ca-app-pub-2492078126313994/7665766435';
+
+  // ─── Coin Economy ─────────────────────────────────────────────────────────
+  static const int coinsPerStar          = 2;
+  static const int coinsPerLevelComplete = 5;
+  static const int hintCost              = 40;
+  static const int extraMovesCost        = 30;
+  static const int startingCoins         = 25;
+  static const int startingHints         = 1;
+
+  // ─── Gameplay ─────────────────────────────────────────────────────────────
+  static const int maxLives          = 5;
+  static const int lifeRegenMinutes  = 30;
+  static const int extraTubeCost     = 100;
+
+  // ─── Ad Display Rules (aggressive but policy-compliant) ───────────────────
+  // Interstitial shown every N levels (1 = every level, 2 = every other)
+  static const int interstitialEveryNLevels = 1;
+  // Minimum seconds between interstitials to avoid policy violation
+  static const int interstitialCooldownSecs = 30;
+
+  // ─── Remove Ads Tiers ─────────────────────────────────────────────────────
   static const String removeAdsDayPrice     = '\$0.99';
   static const String removeAdsWeekendPrice = '\$2.99';
   static const String removeAdsMonthPrice   = '\$8.99';
@@ -37,10 +57,10 @@ class GameConstants {
   // ─── Hint Packs ───────────────────────────────────────────────────────────
   static const String hintPackSmallPrice = '\$0.99';
   static const String hintPackLargePrice = '\$1.99';
-  static const int hintPackSmallCount = 5;
-  static const int hintPackLargeCount = 15;
+  static const int    hintPackSmallCount = 5;
+  static const int    hintPackLargeCount = 15;
 
-  // ─── Animation Durations ──────────────────────────────────────────────────
+  // ─── Durations ────────────────────────────────────────────────────────────
   static const Duration gemMoveDuration    = Duration(milliseconds: 300);
   static const Duration matchFlashDuration = Duration(milliseconds: 200);
   static const Duration particleDuration   = Duration(milliseconds: 800);

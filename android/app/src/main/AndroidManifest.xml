@@ -1,22 +1,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.chastechgroup.crystalcascade">
 
-    <!-- ── Original permissions ────────────────────────────────────────────── -->
+    <!-- ── Network ─────────────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Required for Google Play Billing / in-app purchases -->
-    <uses-permission android:name="com.android.vending.BILLING" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- ── Google Play Billing ─────────────────────────────────────────────── -->
+    <uses-permission android:name="com.android.vending.BILLING" />
+
+    <!-- ── Device ──────────────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 
-    <!-- ── Notifications (Android 13+) ─────────────────────────────────────── -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- ── Notifications (Android 13+) ────────────────────────────────────── -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- ── Exact alarms for scheduled notifications ─────────────────────────── -->
-    <!-- USE_EXACT_ALARM works without user prompt on Android 12+ (target SDK 33+) -->
+    <!-- ── Exact alarms for scheduled notifications ────────────────────────── -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <!-- Fallback for older targets — user can approve via system settings -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
@@ -26,7 +27,6 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="true"
         android:fullBackupContent="true"
-        android:networkSecurityConfig="@xml/network_security_config"
         android:usesCleartextTraffic="false">
 
         <activity
@@ -51,13 +51,11 @@
             </intent-filter>
         </activity>
 
-        <!-- ── flutter_local_notifications receivers ────────────────────────── -->
-        <!-- Fires the notification at the scheduled time -->
+        <!-- ── flutter_local_notifications receivers ───────────────────────── -->
         <receiver
             android:exported="false"
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
 
-        <!-- Re-schedules notifications after device reboot -->
         <receiver
             android:exported="false"
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
@@ -69,10 +67,10 @@
             </intent-filter>
         </receiver>
 
-        <!-- AdMob App ID — replace with production ID before release -->
+        <!-- ── PRODUCTION AdMob App ID ──────────────────────────────────────── -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
+            android:value="ca-app-pub-2492078126313994~1061290053" />
 
         <meta-data
             android:name="flutterEmbedding"
