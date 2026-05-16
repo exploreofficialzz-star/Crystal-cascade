@@ -80,6 +80,24 @@ android {
             resValue "string", "app_name", "Crystal Cascade Dev"
         }
     }
+
+    // ── Fix: replace deprecated play:core monolith with SDK-34-compatible
+    //         split libraries so broadcast receivers work on Android 14+
+    configurations.all {
+        resolutionStrategy {
+            eachDependency { DependencyResolveDetails details ->
+                if (details.requested.group == 'com.google.android.play'
+                        && details.requested.name == 'core') {
+                    details.useTarget(
+                        group:   'com.google.android.play',
+                        name:    'core-ktx',
+                        version: '1.8.1'
+                    )
+                    details.because('play:core 1.10.3 incompatible with targetSdkVersion 34')
+                }
+            }
+        }
+    }
 }
 
 flutter { source '../..' }
@@ -89,7 +107,9 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0"
     implementation 'androidx.multidex:multidex:2.0.1'
     implementation 'androidx.appcompat:appcompat:1.7.0'
-    // Play Core — satisfies R8 at compile time so minification doesn't
-    // crash on Flutter's deferred-component split-install references
-    implementation 'com.google.android.play:core:1.10.3'
+
+    // SDK-34-compatible Play Core split libraries (replaces deprecated monolith)
+    implementation 'com.google.android.play:core-ktx:1.8.1'
+    implementation 'com.google.android.play:app-update-ktx:2.1.0'
+    implementation 'com.google.android.play:review-ktx:2.0.1'
 }
