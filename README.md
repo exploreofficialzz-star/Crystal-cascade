@@ -124,6 +124,7 @@ Both workflows:
 
 ## AdMob Configuration
 
+
 ### Before Release - IMPORTANT:
 
 1. Create an AdMob account at https://apps.admob.com
@@ -152,6 +153,7 @@ The splash screen displays the game logo with the developer tag **"by chAs"**.
 ## License
 
 This project is proprietary. All rights reserved by chAs Tech Group.
+
 
 ## Developer
 
