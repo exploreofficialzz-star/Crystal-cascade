@@ -203,7 +203,7 @@ class _AdBlockWallState extends State<_AdBlockWall> {
 
                 // Tip
                 Text(
-                  'Tip: Disable your VPN or ad-blocker app,\n'
+                  'Tip: Disable your ad-blocker app or browser extension,\n'
                   'then tap "I\'ve Disabled My Ad Blocker".',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.35),
