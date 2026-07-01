@@ -66,23 +66,41 @@ void main() {
   });
 
   group('GameConstants Tests', () {
-    test('Generates 100 levels', () {
-      final levels = GameConstants.generateLevels();
-      expect(levels.length, 100);
-    });
-
     test('First level is unlocked by default', () {
-      final levels = GameConstants.generateLevels();
-      expect(levels[0].isUnlocked, true);
+      final level = GameConstants.generateLevel(1);
+      expect(level.isUnlocked, true);
     });
 
     test('Level 1 has correct configuration', () {
-      final levels = GameConstants.generateLevels();
-      final level1 = levels[0];
+      final level1 = GameConstants.generateLevel(1);
       expect(level1.id, 1);
       expect(level1.tubesCount, 3);
       expect(level1.tubeCapacity, 6);
       expect(level1.availableColors.length, 2);
+    });
+
+    test('Level generation continues indefinitely past the old 100-level cap', () {
+      final level150 = GameConstants.generateLevel(150);
+      expect(level150.id, 150);
+      expect(level150.tubesCount, greaterThan(0));
+      expect(level150.availableColors, isNotEmpty);
+      expect(level150.maxMoves, greaterThan(0));
+    });
+
+    test('Color count never exceeds available gem assets', () {
+      final farLevel = GameConstants.generateLevel(5000);
+      expect(farLevel.availableColors.length,
+          lessThanOrEqualTo(GameConstants.maxColors));
+    });
+
+    test('Tube count never exceeds the 10-tube screen cap', () {
+      final farLevel = GameConstants.generateLevel(5000);
+      expect(farLevel.tubesCount, lessThanOrEqualTo(10));
+    });
+
+    test('Move budget stays positive at extreme level numbers', () {
+      final extremeLevel = GameConstants.generateLevel(100000);
+      expect(extremeLevel.maxMoves, greaterThan(0));
     });
   });
 }
