@@ -59,9 +59,10 @@ class _LevelSelectScreenState extends State<LevelSelectScreen> {
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 12,
                         ),
-                        itemCount: game.levels.length,
+                        // No itemCount → unbounded grid. Progression never
+                        // ends, so the level list never ends either.
                         itemBuilder: (context, index) {
-                          final level = game.levels[index];
+                          final level = game.levelAt(index + 1);
                           return _buildLevelCard(context, level, game);
                         },
                       );

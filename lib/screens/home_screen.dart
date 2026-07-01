@@ -317,11 +317,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _startGame(BuildContext context) {
     final game = context.read<GameProvider>();
-    final nextLevel = game.levels.firstWhere(
-      (l) => l.isUnlocked && l.bestStars == null,
-      orElse: () => game.levels.firstWhere((l) => l.isUnlocked),
-    );
-    game.startLevel(nextLevel);
+    final level = game.levelAt(game.highestUnlockedId);
+    game.startLevel(level);
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const GameScreen()),
     );

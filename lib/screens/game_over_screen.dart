@@ -221,18 +221,11 @@ class _WinContent extends StatelessWidget {
               icon: Icons.arrow_forward_rounded,
               color: Colors.greenAccent,
               onTap: () {
-                final currentId = game.currentLevel?.id ?? 1;
-                if (currentId < game.levels.length) {
-                  game.startLevel(game.levels[currentId]);
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(builder: (_) => const GameScreen()),
-                  );
-                } else {
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (_) => const LevelSelectScreen()),
-                    (r) => false,
-                  );
-                }
+                final nextId = (game.currentLevel?.id ?? 0) + 1;
+                game.startLevel(game.levelAt(nextId));
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const GameScreen()),
+                );
               },
             ),
             const SizedBox(height: 14),

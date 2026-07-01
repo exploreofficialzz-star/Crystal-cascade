@@ -8,6 +8,7 @@ import '../services/iap_service.dart';
 import '../services/storage_service.dart';
 import '../utils/constants.dart';
 import '../widgets/ad_banner_widget.dart';
+import '../widgets/native_ad_widget.dart';
 
 class ShopScreen extends StatefulWidget {
   /// When true, page opens scrolled to the Remove Ads section.
@@ -151,6 +152,10 @@ class _ShopScreenState extends State<ShopScreen> {
                           _snack('🎁 50 coins claimed!', Colors.amber);
                         },
                       ),
+                      const SizedBox(height: 24),
+
+                      // ── Native ad — blends into the list, not a wall ────
+                      const NativeAdWidget(),
                       const SizedBox(height: 24),
 
                       // ── Hints ──────────────────────────────────────────

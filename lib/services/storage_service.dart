@@ -12,6 +12,30 @@ class StorageService {
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
+    await _migrateLegacyProgressIfNeeded();
+  }
+
+  /// One-time migration for players who already had progress under the old
+  /// fixed 1-100 level system. Computes total stars and the highest unlocked
+  /// level ONCE from the old per-level keys, then stores them as O(1)
+  /// counters so nothing ever needs to scan 1-100 again (which wouldn't
+  /// even be possible now that levels are infinite).
+  Future<void> _migrateLegacyProgressIfNeeded() async {
+    if (_prefs?.containsKey('total_stars') ?? false) return; // already migrated
+
+    int total = 0;
+    int highest = 1;
+    for (int i = 1; i <= 100; i++) {
+      final raw = _prefs?.getString('level_$i');
+      if (raw == null) continue;
+      try {
+        final data = jsonDecode(raw) as Map<String, dynamic>;
+        total += (data['bestStars'] ?? 0) as int;
+        if ((data['unlocked'] == true) && i > highest) highest = i;
+      } catch (_) {}
+    }
+    await _prefs?.setInt('total_stars', total);
+    await _prefs?.setInt('highest_unlocked_level', highest);
   }
 
   // ─── Coins ────────────────────────────────────────────────────────────────
@@ -92,19 +116,17 @@ class StorageService {
   Future<void> setHighScore(int score) async =>
       await _prefs?.setInt('high_score', score);
 
-  int getTotalStars() {
-    int total = 0;
-    for (int i = 1; i <= 100; i++) {
-      final raw = _prefs?.getString('level_$i');
-      if (raw != null) {
-        try {
-          final data = jsonDecode(raw);
-          total += (data['bestStars'] ?? 0) as int;
-        } catch (_) {}
-      }
-    }
-    return total;
+  int getTotalStars() => _prefs?.getInt('total_stars') ?? 0;
+
+  Future<void> addToTotalStars(int delta) async {
+    if (delta <= 0) return;
+    await _prefs?.setInt('total_stars', getTotalStars() + delta);
   }
+
+  // ─── Endless progression ──────────────────────────────────────────────────
+  int getHighestUnlockedId() => _prefs?.getInt('highest_unlocked_level') ?? 1;
+  Future<void> setHighestUnlockedId(int id) async =>
+      await _prefs?.setInt('highest_unlocked_level', id);
 
   // ─── Remove Ads — Tiered with Expiry ──────────────────────────────────────
   //

@@ -31,7 +31,12 @@ class GameProvider extends ChangeNotifier {
   int _score = 0;
   int _stars = 0;
   int _comboCount = 0;
-  List<Level> _levels = [];
+
+  // ── Endless level system ──────────────────────────────────────────────────
+  // Levels are generated on demand (GameConstants.generateLevel) and cached
+  // here as they're visited/unlocked. There is no fixed final level.
+  final Map<int, Level> _levelCache = {};
+  int _highestUnlockedId = 1;
 
   Timer? _hintClearTimer;
 
@@ -44,7 +49,7 @@ class GameProvider extends ChangeNotifier {
   int get score => _score;
   int get stars => _stars;
   int get comboCount => _comboCount;
-  List<Level> get levels => _levels;
+  int get highestUnlockedId => _highestUnlockedId;
 
   int get totalCoins => _storage.getCoins();
   int get lives => _storage.getLives();
@@ -52,18 +57,18 @@ class GameProvider extends ChangeNotifier {
   int get totalStars => _storage.getTotalStars();
 
   GameProvider() {
-    _levels = GameConstants.generateLevels();
-    _loadLevelProgress();
+    _highestUnlockedId = _storage.getHighestUnlockedId();
   }
 
-  void _loadLevelProgress() {
-    for (int i = 0; i < _levels.length; i++) {
-      final progress = _storage.loadLevelProgress(_levels[i]);
-      if (progress != null) {
-        _levels[i] = progress;
-      }
-    }
-    notifyListeners();
+  /// Returns the level for [id], generating it fresh (and merging any saved
+  /// progress) the first time it's requested, then serving from cache.
+  Level levelAt(int id) {
+    final cached = _levelCache[id];
+    if (cached != null) return cached;
+    final base = GameConstants.generateLevel(id);
+    final withProgress = _storage.loadLevelProgress(base) ?? base;
+    _levelCache[id] = withProgress;
+    return withProgress;
   }
 
   void startLevel(Level level) {
@@ -196,15 +201,27 @@ class GameProvider extends ChangeNotifier {
     final currentBestStars = _currentLevel!.bestStars ?? 0;
     final newStars = _stars > currentBestStars ? _stars : currentBestStars;
     final updatedLevel = _currentLevel!.copyWith(bestStars: newStars, bestScore: _score);
+    _levelCache[updatedLevel.id] = updatedLevel;
     await _storage.saveLevelProgress(updatedLevel);
     await _storage.addCoins(GameConstants.coinsPerLevelComplete);
-    final nextLevelIndex = _currentLevel!.id;
-    if (nextLevelIndex < _levels.length) {
-      final nextLevel = _levels[nextLevelIndex].copyWith(isUnlocked: true);
-      _levels[nextLevelIndex] = nextLevel;
-      await _storage.saveLevelProgress(nextLevel);
+
+    final starDelta = newStars - currentBestStars;
+    if (starDelta > 0) await _storage.addToTotalStars(starDelta);
+
+    // Unlock the next level — always, since progression has no ceiling.
+    final nextId = updatedLevel.id + 1;
+    final nextLevel = levelAt(nextId);
+    if (!nextLevel.isUnlocked) {
+      final unlocked = nextLevel.copyWith(isUnlocked: true);
+      _levelCache[nextId] = unlocked;
+      await _storage.saveLevelProgress(unlocked);
     }
-    _loadLevelProgress();
+    if (nextId > _highestUnlockedId) {
+      _highestUnlockedId = nextId;
+      await _storage.setHighestUnlockedId(nextId);
+    }
+
+    notifyListeners();
   }
 
   // ─── Hint System ──────────────────────────────────────────────────────────
@@ -304,6 +321,36 @@ class GameProvider extends ChangeNotifier {
       _movesRemaining += 5;
       notifyListeners();
     }
+  }
+
+  // ─── Extra Tube ───────────────────────────────────────────────────────────
+  // A stuck board sometimes just needs more space, not more moves — this
+  // adds one empty tube. Capped at +2 above the level's original tube count
+  // per attempt so it stays a rescue, not a way to trivialize hard boards.
+  bool get canAddExtraTube =>
+      _status == GameStatus.playing &&
+      _currentLevel != null &&
+      _tubes.length < _currentLevel!.tubesCount + 2;
+
+  void _addTube() {
+    _tubes.add([]);
+    _audio.playTap();
+    notifyListeners();
+  }
+
+  Future<bool> buyExtraTube() async {
+    if (!canAddExtraTube) return false;
+    if (await _storage.spendCoins(GameConstants.extraTubeCost)) {
+      _addTube();
+      return true;
+    }
+    return false;
+  }
+
+  /// Grants a free tube after a rewarded ad — no coin spend.
+  void addFreeExtraTube() {
+    if (!canAddExtraTube) return;
+    _addTube();
   }
 
   // ─── Misc ─────────────────────────────────────────────────────────────────
