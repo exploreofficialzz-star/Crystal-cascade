@@ -61,6 +61,10 @@ class GameConstants {
   static const int    hintPackSmallCount = 5;
   static const int    hintPackLargeCount = 15;
 
+  // ─── Daily Bonus ──────────────────────────────────────────────────────────
+  static const int dailyBonusCoins      = 50;
+  static const int dailyBonusCooldownMs = 24 * 60 * 60 * 1000; // rolling 24h
+
   // ─── Durations ────────────────────────────────────────────────────────────
   static const Duration gemMoveDuration    = Duration(milliseconds: 300);
   static const Duration matchFlashDuration = Duration(milliseconds: 200);

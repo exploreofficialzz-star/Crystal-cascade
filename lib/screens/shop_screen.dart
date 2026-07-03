@@ -26,6 +26,7 @@ class _ShopScreenState extends State<ShopScreen> {
 
   StreamSubscription<IAPResult>? _iapSub;
   String? _purchasingId; // product currently being purchased
+  bool _claimingDaily = false; // guards a fast double-tap during the async claim write
 
   // Key used to scroll to Remove Ads section
   final GlobalKey _removeAdsKey = GlobalKey();
@@ -119,7 +120,10 @@ class _ShopScreenState extends State<ShopScreen> {
               _buildAppBar(context),
               Expanded(
                 child: Consumer<GameProvider>(
-                  builder: (context, game, _) => ListView(
+                  builder: (context, game, _) {
+                    final canClaimDaily = StorageService().canClaimDailyBonus();
+                    final dailyRemaining = StorageService().getDailyBonusTimeRemaining();
+                    return ListView(
                     controller: _scrollCtrl,
                     padding: const EdgeInsets.all(20),
                     children: [
@@ -141,14 +145,25 @@ class _ShopScreenState extends State<ShopScreen> {
                       const SizedBox(height: 8),
                       _freeCard(
                         'Daily Bonus',
-                        'Claim your 50-coin daily reward',
-                        Icons.card_giftcard,
-                        Colors.greenAccent,
-                        () {
-                          AudioService().playCoin();
-                          game.claimRewardCoins(50);
-                          _snack('🎁 50 coins claimed!', Colors.amber);
-                        },
+                        canClaimDaily
+                            ? 'Claim your ${GameConstants.dailyBonusCoins}-coin daily reward'
+                            : 'Come back in ${_formatDuration(dailyRemaining)}',
+                        canClaimDaily ? Icons.card_giftcard : Icons.timer,
+                        canClaimDaily ? Colors.greenAccent : Colors.grey,
+                        canClaimDaily
+                            ? () async {
+                                if (_claimingDaily) return;
+                                setState(() => _claimingDaily = true);
+                                await StorageService().claimDailyBonus();
+                                AudioService().playCoin();
+                                game.claimRewardCoins(GameConstants.dailyBonusCoins);
+                                _snack('🎁 ${GameConstants.dailyBonusCoins} coins claimed!',
+                                    Colors.amber);
+                                if (mounted) setState(() => _claimingDaily = false);
+                              }
+                            : () => _snack(
+                                'Come back in ${_formatDuration(dailyRemaining)}!',
+                                Colors.orangeAccent),
                       ),
                       const SizedBox(height: 24),
 
@@ -237,7 +252,8 @@ class _ShopScreenState extends State<ShopScreen> {
                       _restoreButton(),
                       const SizedBox(height: 30),
                     ],
-                  ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -530,6 +546,14 @@ class _ShopScreenState extends State<ShopScreen> {
           style: TextStyle(
               color: color, fontSize: 9, fontWeight: FontWeight.bold)),
     );
+  }
+
+  String _formatDuration(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes % 60;
+    if (h > 0) return '${h}h ${m}m';
+    if (m > 0) return '${m}m';
+    return 'a moment';
   }
 
   Widget _freeCard(String title, String subtitle, IconData icon, Color color,

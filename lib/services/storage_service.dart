@@ -158,6 +158,33 @@ class StorageService {
   Future<void> setRemoveAdsPurchased(bool value) async =>
       await _prefs?.setBool('remove_ads', value);
 
+  // ─── Daily Bonus ──────────────────────────────────────────────────────────
+  //  Tracked as a rolling 24h cooldown from the last claim (epoch ms), not a
+  //  calendar-day reset — a calendar-day reset would still let someone claim
+  //  at 11:59pm and again at 12:01am, which defeats the point of a fix.
+
+  Future<void> claimDailyBonus() async => await _prefs?.setInt(
+      'daily_bonus_last_claimed', DateTime.now().millisecondsSinceEpoch);
+
+  int getDailyBonusLastClaimed() =>
+      _prefs?.getInt('daily_bonus_last_claimed') ?? 0;
+
+  bool canClaimDailyBonus() {
+    final last = getDailyBonusLastClaimed();
+    if (last == 0) return true; // never claimed
+    final elapsed = DateTime.now().millisecondsSinceEpoch - last;
+    return elapsed >= GameConstants.dailyBonusCooldownMs;
+  }
+
+  /// Time left until the next claim unlocks. Zero once claimable.
+  Duration getDailyBonusTimeRemaining() {
+    final last = getDailyBonusLastClaimed();
+    if (last == 0) return Duration.zero;
+    final readyAt = last + GameConstants.dailyBonusCooldownMs;
+    final remainingMs = readyAt - DateTime.now().millisecondsSinceEpoch;
+    return remainingMs > 0 ? Duration(milliseconds: remainingMs) : Duration.zero;
+  }
+
   // ─── Hints ────────────────────────────────────────────────────────────────
   int getHints() => _prefs?.getInt('hints') ?? GameConstants.startingHints;
   Future<void> setHints(int hints) async =>
