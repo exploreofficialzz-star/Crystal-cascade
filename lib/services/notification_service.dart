@@ -51,8 +51,8 @@ class NotificationService {
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     await android?.requestNotificationsPermission();
-    // NOTE: USE_EXACT_ALARM in AndroidManifest.xml handles exact alarm permission
-    // automatically on Android 12+ without a user prompt. No runtime request needed.
+    // Notifications use inexact scheduling (see zonedSchedule calls below),
+    // so no exact-alarm permission or extra runtime request is needed.
 
     _initialized = true;
 
@@ -98,7 +98,7 @@ class NotificationService {
       'Claim your 50 free coins — they\'re waiting for you!',
       _nextTimeOfDay(10, 0),
       _details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: DateTimeComponents.time,
@@ -110,7 +110,7 @@ class NotificationService {
       'Don\'t let your daily coins go to waste. Tap to collect!',
       _nextTimeOfDay(19, 0),
       _details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: DateTimeComponents.time,
@@ -125,7 +125,7 @@ class NotificationService {
       'One level a day keeps the streak going. Play Crystal Cascade!',
       _nextTimeOfDay(8, 0),
       _details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: DateTimeComponents.time,
@@ -150,7 +150,7 @@ class NotificationService {
       'All your lives are back. Come jump into Crystal Cascade!',
       fireAt,
       _details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
     );
@@ -172,7 +172,7 @@ class NotificationService {
       'Your crystals are waiting. Come back and sort some gems!',
       fireAt,
       _details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
     );
@@ -192,7 +192,7 @@ class NotificationService {
       'Remove Ads for just \$0.99 today only. Grab it before it\'s gone!',
       fireAt,
       _details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
     );

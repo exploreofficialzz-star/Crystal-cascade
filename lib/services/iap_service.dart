@@ -2,9 +2,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
-import '../screens/paystack_checkout_screen.dart';
-import '../services/install_source_service.dart';
-import '../services/paystack_service.dart';
 import '../services/storage_service.dart';
 import '../utils/constants.dart';
 
@@ -112,17 +109,9 @@ class IAPService {
   }
 
   // ─── Trigger a purchase ────────────────────────────────────────────────────
-  // context is required because the Paystack fallback path (sideloaded
-  // installs only) needs to push a checkout screen. Play Store installs
-  // never touch context — identical to the original flow.
+  // context is kept in the signature so call sites don't need to change,
+  // but it's unused now — every purchase goes through Play Billing.
   Future<void> buyProduct(BuildContext context, String productId) async {
-    final isPlayStoreInstall = await InstallSourceService().isPlayStoreInstall;
-    if (!isPlayStoreInstall) {
-      if (!context.mounted) return;
-      await _buyViaPaystack(context, productId);
-      return;
-    }
-
     if (!_isAvailable) {
       _resultCtrl.add(IAPResult(
         success: false,
@@ -163,73 +152,7 @@ class IAPService {
     }
   }
 
-  // ─── Paystack fallback (sideloaded installs only) ──────────────────────────
-  // Play Store policy requires Play Billing for that channel, but a
-  // sideloaded APK was never part of that channel to begin with — Play
-  // Billing typically has no usable account context there anyway. This talks
-  // ONLY to our own backend (see paystack-server/), never to Paystack's API
-  // directly, so the secret key never ships inside the app. See
-  // paystack_service.dart and paystack-server/README.md for the full flow
-  // and required one-time setup.
-  Future<void> _buyViaPaystack(BuildContext context, String productId) async {
-    if (!PaystackService().isConfigured) {
-      _resultCtrl.add(IAPResult(
-        success: false,
-        productId: productId,
-        error: 'Card payments are not set up yet for installs outside '
-            'the Play Store. Please try again later.',
-      ));
-      return;
-    }
 
-    final init = await PaystackService().initializeTransaction(productId);
-    if (init == null) {
-      _resultCtrl.add(IAPResult(
-        success: false,
-        productId: productId,
-        error: 'Could not start payment. Check your connection and try again.',
-      ));
-      return;
-    }
-
-    if (!context.mounted) return;
-    final reference = await Navigator.of(context).push<String?>(
-      MaterialPageRoute(
-        builder: (_) => PaystackCheckoutScreen(
-          checkoutUrl: init.authorizationUrl,
-          reference: init.reference,
-        ),
-      ),
-    );
-
-    if (reference == null) {
-      // User backed out — not an error, handled silently in the UI same as
-      // a canceled Play Billing purchase.
-      _resultCtrl.add(IAPResult(
-        success: false,
-        productId: productId,
-        error: 'canceled',
-      ));
-      return;
-    }
-
-    final verified = await PaystackService()
-        .verifyTransaction(reference: reference, productId: productId);
-
-    if (verified) {
-      await _deliverProduct(productId);
-      _resultCtrl.add(IAPResult(success: true, productId: productId));
-    } else {
-      _resultCtrl.add(IAPResult(
-        success: false,
-        productId: productId,
-        error: 'Payment could not be verified. If you were charged, '
-            'contact support with reference $reference.',
-      ));
-    }
-  }
-
-  // ─── Handle store callbacks ────────────────────────────────────────────────
   Future<void> _onPurchaseUpdates(
       List<PurchaseDetails> purchaseDetailsList) async {
     for (final purchase in purchaseDetailsList) {

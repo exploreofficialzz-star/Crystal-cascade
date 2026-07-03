@@ -8,7 +8,6 @@ import 'services/adblock_service.dart';
 import 'services/admob_service.dart';
 import 'services/audio_service.dart';
 import 'services/iap_service.dart';
-import 'services/install_source_service.dart';
 import 'services/network_service.dart';
 import 'services/notification_service.dart';
 import 'services/storage_service.dart';
@@ -28,9 +27,6 @@ void main() async {
 
   // ── Network awareness ──────────────────────────────────────────────────────
   await NetworkService().init();
-
-  // ── Install source (Play Store vs sideloaded) — needed before IAP ─────────
-  await InstallSourceService().warmUp();
 
   // ── In-App Purchases (non-blocking) ───────────────────────────────────────
   IAPService().init();
