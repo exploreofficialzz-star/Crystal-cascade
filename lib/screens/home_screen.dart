@@ -7,7 +7,6 @@ import '../services/admob_service.dart';
 import '../services/audio_service.dart';
 import '../services/notification_service.dart';
 import '../utils/constants.dart';
-import '../widgets/ad_banner_widget.dart';
 import 'game_screen.dart';
 import 'level_select_screen.dart';
 import 'settings_screen.dart';
@@ -88,7 +87,6 @@ class _HomeScreenState extends State<HomeScreen>
           child: SafeArea(
             child: Column(
               children: [
-                const AdBannerWidget(),
                 Expanded(
                   child: Consumer<GameProvider>(
                     builder: (context, game, child) {

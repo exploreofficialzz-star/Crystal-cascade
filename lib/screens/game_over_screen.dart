@@ -6,7 +6,6 @@ import '../services/admob_service.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
 import '../utils/constants.dart';
-import '../widgets/ad_banner_widget.dart';
 import 'game_screen.dart';
 import 'home_screen.dart';
 import 'level_select_screen.dart';
@@ -111,7 +110,6 @@ class _GameOverScreenState extends State<GameOverScreen>
 
                     Column(
                       children: [
-                        const AdBannerWidget(),
                         Expanded(
                           child: SlideTransition(
                             position: _slideAnim,

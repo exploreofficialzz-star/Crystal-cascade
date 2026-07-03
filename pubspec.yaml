@@ -40,6 +40,10 @@ dependencies:
   # In-App Purchases (real store transactions)
   in_app_purchase: ^3.2.0
 
+  # Paystack fallback (sideloaded installs) — talks to our own backend only
+  http: ^1.2.0
+  webview_flutter: ^4.4.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -7,7 +7,6 @@ import '../services/audio_service.dart';
 import '../services/iap_service.dart';
 import '../services/storage_service.dart';
 import '../utils/constants.dart';
-import '../widgets/ad_banner_widget.dart';
 import '../widgets/native_ad_widget.dart';
 
 class ShopScreen extends StatefulWidget {
@@ -81,7 +80,7 @@ class _ShopScreenState extends State<ShopScreen> {
   void _buy(String productId) async {
     if (_purchasingId != null) return; // block double-tap
     setState(() => _purchasingId = productId);
-    await IAPService().buyProduct(productId);
+    await IAPService().buyProduct(context, productId);
     // Result handled by stream listener above
   }
 
@@ -118,7 +117,6 @@ class _ShopScreenState extends State<ShopScreen> {
           child: Column(
             children: [
               _buildAppBar(context),
-              const AdBannerWidget(),
               Expanded(
                 child: Consumer<GameProvider>(
                   builder: (context, game, _) => ListView(

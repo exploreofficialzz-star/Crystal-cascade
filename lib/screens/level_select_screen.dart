@@ -5,7 +5,6 @@ import '../providers/game_provider.dart';
 import '../models/level.dart';
 import '../services/admob_service.dart';
 import '../services/audio_service.dart';
-import '../widgets/ad_banner_widget.dart';
 import 'game_screen.dart';
 
 class LevelSelectScreen extends StatefulWidget {
@@ -47,7 +46,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen> {
             child: Column(
               children: [
                 _buildAppBar(context),
-                const AdBannerWidget(),
                 Expanded(
                   child: Consumer<GameProvider>(
                     builder: (context, game, child) {
