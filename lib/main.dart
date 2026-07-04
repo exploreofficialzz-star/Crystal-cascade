@@ -17,7 +17,7 @@ import 'widgets/network_overlay.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ── Core services ──────────────────────────────────────────────────────────
+  // ── Core services ─────────────────────────────────────────────── ───────────
   await StorageService().init();
   await AdMobService().init();
   await AudioService().init();
