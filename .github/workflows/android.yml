@@ -37,14 +37,14 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/release-key.jks
-      - name: Build APK (split per ABI)
+      - name: Build APK (universal — works on all Android devices)
         if: github.event_name != 'pull_request'
         env:
           KEYSTORE_PATH: release-key.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: flutter build apk --release --split-per-abi --flavor production
+        run: flutter build apk --release --flavor production
       - name: Build App Bundle (AAB)
         if: github.event_name != 'pull_request'
         env:
@@ -82,7 +82,7 @@ jobs:
           body: |
             ## Crystal Cascade — Android Release v${{ github.run_number }}
             ### Downloads
-            - **APK** — Direct install (arm64, armeabi-v7a, x86_64)
+            - **APK** — Universal, installs directly on any Android phone (arm64, armv7, x86_64 all in one file)
             - **AAB** — Upload this to Google Play Store
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
