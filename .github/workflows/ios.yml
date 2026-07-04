@@ -1,0 +1,59 @@
+# iOS CI/CD — DISABLED
+# Not ready for iOS release yet.
+# Re-enable by removing the "if: false" condition from the build job
+# and uncommenting the steps below when Apple certificates are ready.
+name: iOS CI/CD Build
+on:
+  workflow_dispatch:   # manual trigger only — won't run on push/PR
+jobs:
+  build:
+    if: false          # hard-disabled until iOS signing is configured
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods
+      - name: Get dependencies
+        run: flutter pub get
+      - name: Install iOS dependencies
+        run: |
+          cd ios
+          pod install --repo-update
+      - name: Analyze project
+        run: flutter analyze --no-fatal-infos
+      - name: Run tests
+        run: flutter test
+      - name: Build iOS App
+        run: flutter build ios --release --no-codesign
+      - name: Create IPA
+        run: |
+          mkdir -p build/ios/ipa
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r ../ipa/CrystalCascade.ipa Payload
+          rm -rf Payload
+      - name: Upload iOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: build/ios/ipa/*.ipa
+          retention-days: 30
+      - name: Create Release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/ios/ipa/*.ipa
+          tag_name: ios-v${{ github.run_number }}
+          name: iOS Release v${{ github.run_number }}
+          body: |
+            Crystal Cascade - iOS Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
