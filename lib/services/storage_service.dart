@@ -12,30 +12,6 @@ class StorageService {
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
-    await _migrateLegacyProgressIfNeeded();
-  }
-
-  /// One-time migration for players who already had progress under the old
-  /// fixed 1-100 level system. Computes total stars and the highest unlocked
-  /// level ONCE from the old per-level keys, then stores them as O(1)
-  /// counters so nothing ever needs to scan 1-100 again (which wouldn't
-  /// even be possible now that levels are infinite).
-  Future<void> _migrateLegacyProgressIfNeeded() async {
-    if (_prefs?.containsKey('total_stars') ?? false) return; // already migrated
-
-    int total = 0;
-    int highest = 1;
-    for (int i = 1; i <= 100; i++) {
-      final raw = _prefs?.getString('level_$i');
-      if (raw == null) continue;
-      try {
-        final data = jsonDecode(raw) as Map<String, dynamic>;
-        total += (data['bestStars'] ?? 0) as int;
-        if ((data['unlocked'] == true) && i > highest) highest = i;
-      } catch (_) {}
-    }
-    await _prefs?.setInt('total_stars', total);
-    await _prefs?.setInt('highest_unlocked_level', highest);
   }
 
   // ─── Coins ────────────────────────────────────────────────────────────────
@@ -116,17 +92,19 @@ class StorageService {
   Future<void> setHighScore(int score) async =>
       await _prefs?.setInt('high_score', score);
 
-  int getTotalStars() => _prefs?.getInt('total_stars') ?? 0;
-
-  Future<void> addToTotalStars(int delta) async {
-    if (delta <= 0) return;
-    await _prefs?.setInt('total_stars', getTotalStars() + delta);
+  int getTotalStars() {
+    int total = 0;
+    for (int i = 1; i <= 100; i++) {
+      final raw = _prefs?.getString('level_$i');
+      if (raw != null) {
+        try {
+          final data = jsonDecode(raw);
+          total += (data['bestStars'] ?? 0) as int;
+        } catch (_) {}
+      }
+    }
+    return total;
   }
-
-  // ─── Endless progression ──────────────────────────────────────────────────
-  int getHighestUnlockedId() => _prefs?.getInt('highest_unlocked_level') ?? 1;
-  Future<void> setHighestUnlockedId(int id) async =>
-      await _prefs?.setInt('highest_unlocked_level', id);
 
   // ─── Remove Ads — Tiered with Expiry ──────────────────────────────────────
   //
@@ -158,32 +136,11 @@ class StorageService {
   Future<void> setRemoveAdsPurchased(bool value) async =>
       await _prefs?.setBool('remove_ads', value);
 
-  // ─── Daily Bonus ──────────────────────────────────────────────────────────
-  //  Tracked as a rolling 24h cooldown from the last claim (epoch ms), not a
-  //  calendar-day reset — a calendar-day reset would still let someone claim
-  //  at 11:59pm and again at 12:01am, which defeats the point of a fix.
-
-  Future<void> claimDailyBonus() async => await _prefs?.setInt(
-      'daily_bonus_last_claimed', DateTime.now().millisecondsSinceEpoch);
-
-  int getDailyBonusLastClaimed() =>
-      _prefs?.getInt('daily_bonus_last_claimed') ?? 0;
-
-  bool canClaimDailyBonus() {
-    final last = getDailyBonusLastClaimed();
-    if (last == 0) return true; // never claimed
-    final elapsed = DateTime.now().millisecondsSinceEpoch - last;
-    return elapsed >= GameConstants.dailyBonusCooldownMs;
-  }
-
-  /// Time left until the next claim unlocks. Zero once claimable.
-  Duration getDailyBonusTimeRemaining() {
-    final last = getDailyBonusLastClaimed();
-    if (last == 0) return Duration.zero;
-    final readyAt = last + GameConstants.dailyBonusCooldownMs;
-    final remainingMs = readyAt - DateTime.now().millisecondsSinceEpoch;
-    return remainingMs > 0 ? Duration(milliseconds: remainingMs) : Duration.zero;
-  }
+  // ─── Tutorial ─────────────────────────────────────────────────────────────
+  bool hasTutorialCompleted() =>
+      _prefs?.getBool('tutorial_completed') ?? false;
+  Future<void> markTutorialCompleted() async =>
+      await _prefs?.setBool('tutorial_completed', true);
 
   // ─── Hints ────────────────────────────────────────────────────────────────
   int getHints() => _prefs?.getInt('hints') ?? GameConstants.startingHints;

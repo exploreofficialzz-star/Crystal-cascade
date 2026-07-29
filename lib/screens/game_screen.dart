@@ -4,9 +4,11 @@ import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
 import '../services/admob_service.dart';
 import '../services/audio_service.dart';
+import '../services/storage_service.dart';
 import '../utils/constants.dart';
 import '../widgets/ad_banner_widget.dart';
 import '../widgets/tube_widget.dart';
+import '../widgets/tutorial_overlay.dart';
 import 'game_over_screen.dart';
 import 'home_screen.dart';
 import 'shop_screen.dart';
@@ -23,18 +25,23 @@ class _GameScreenState extends State<GameScreen>
   late AnimationController _pulseController;
   StreamSubscription<String>? _rewardSubscription;
 
+  /// True only on a fresh install — hidden as soon as the player finishes all
+  /// tutorial steps or the level ends (whichever comes first).
+  bool _showTutorial = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _showTutorial = !StorageService().hasTutorialCompleted();
 
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
 
-    _rewardSubscription = AdMobService().onRewardEarned.listen((type) {
-      if (!mounted || type != 'extra_moves') return;
+    _rewardSubscription = AdMobService().onRewardEarned.listen((_) {
+      if (!mounted) return;
       context.read<GameProvider>().claimRewardMoves(5);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -81,6 +88,15 @@ class _GameScreenState extends State<GameScreen>
       child: Scaffold(
         body: Consumer<GameProvider>(
           builder: (context, game, child) {
+            // Auto-dismiss tutorial if the level ends before the player
+            // finishes all steps — avoids blocking the game-over navigation.
+            if ((game.status == GameStatus.won ||
+                    game.status == GameStatus.lost) &&
+                _showTutorial) {
+              StorageService().markTutorialCompleted();
+              _showTutorial = false;
+            }
+
             if (game.status == GameStatus.won || game.status == GameStatus.lost) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (mounted) {
@@ -92,32 +108,47 @@ class _GameScreenState extends State<GameScreen>
               });
             }
 
-            return Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF1a1a2e),
-                    Color(0xFF16213e),
-                    Color(0xFF0f3460),
-                    Color(0xFF533483),
-                  ],
+            // Only show tutorial on level 1 for first-time players.
+            final isLevelOne = (game.currentLevel?.id ?? 0) == 1;
+
+            return Stack(
+              children: [
+                Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFF1a1a2e),
+                        Color(0xFF16213e),
+                        Color(0xFF0f3460),
+                        Color(0xFF533483),
+                      ],
+                    ),
+                  ),
+                  child: SafeArea(
+                    child: Column(
+                      children: [
+                        _buildTopHUD(game),
+                        const SizedBox(height: 8),
+                        const AdBannerWidget(),
+                        const SizedBox(height: 8),
+                        Expanded(child: _buildGameArea(game)),
+                        _buildBottomControls(game),
+                        const SizedBox(height: 10),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    _buildTopHUD(game),
-                    const SizedBox(height: 8),
-                    const AdBannerWidget(),
-                    const SizedBox(height: 8),
-                    Expanded(child: _buildGameArea(game)),
-                    _buildBottomControls(game),
-                    const SizedBox(height: 10),
-                  ],
-                ),
-              ),
+
+                // Tutorial overlay — only for first-timers on level 1.
+                if (_showTutorial && isLevelOne)
+                  TutorialOverlay(
+                    onComplete: () {
+                      if (mounted) setState(() => _showTutorial = false);
+                    },
+                  ),
+              ],
             );
           },
         ),
@@ -271,12 +302,6 @@ class _GameScreenState extends State<GameScreen>
             'Restart',
             Colors.orangeAccent,
             () => _showRestartDialog(context),
-          ),
-          _buildControlButton(
-            Icons.view_column,
-            '+1 Tube',
-            Colors.cyanAccent,
-            () => _showExtraTubeDialog(context),
           ),
         ],
       ),
@@ -580,135 +605,6 @@ class _GameScreenState extends State<GameScreen>
                 icon: const Icon(Icons.monetization_on, color: Colors.white),
                 label: Text(
                   'Use ${GameConstants.extraMovesCost} Coins',
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.purple,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape:
-                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text('You have ${game.totalCoins} coins',
-                style: const TextStyle(color: Colors.white38, fontSize: 12)),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showExtraTubeDialog(BuildContext context) {
-    final game = context.read<GameProvider>();
-
-    if (!game.canAddExtraTube) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Max extra tubes reached for this level.'),
-          backgroundColor: Colors.redAccent,
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1a1a2e),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: Colors.cyanAccent.withOpacity(0.5), width: 1),
-        ),
-        title: const Text(
-          'Extra Tube',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          textAlign: TextAlign.center,
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.view_column, color: Colors.cyanAccent, size: 56),
-            const SizedBox(height: 16),
-            const Text('+1 Tube',
-                style: TextStyle(
-                    color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            const Text('Stuck? An extra tube gives you room to work with.\nWatch a short video for free:',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  AdMobService().onRewardEarned.first.then((_) {
-                    if (!mounted) return;
-                    game.addFreeExtraTube();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('🧪 +1 tube added!'),
-                        backgroundColor: Colors.cyanAccent,
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                  });
-                  AdMobService().showRewardedAd(type: 'extra_tube');
-                },
-                icon: const Icon(Icons.play_circle_outline, color: Colors.black),
-                label: const Text('Watch Video',
-                    style: TextStyle(
-                        color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.amberAccent,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape:
-                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Row(children: [
-              Expanded(child: Divider(color: Colors.white24)),
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child:
-                    Text('OR', style: TextStyle(color: Colors.white38, fontSize: 12)),
-              ),
-              Expanded(child: Divider(color: Colors.white24)),
-            ]),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  final hasCoins = game.totalCoins >= GameConstants.extraTubeCost;
-                  Navigator.pop(ctx);
-                  if (hasCoins) {
-                    game.buyExtraTube();
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Not enough coins! Watch a video instead.'),
-                        backgroundColor: Colors.redAccent,
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                  }
-                },
-                icon: const Icon(Icons.monetization_on, color: Colors.white),
-                label: Text(
-                  'Use ${GameConstants.extraTubeCost} Coins',
                   style: const TextStyle(
                       color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
                 ),
