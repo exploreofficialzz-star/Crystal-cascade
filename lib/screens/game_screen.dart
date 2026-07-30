@@ -4,9 +4,11 @@ import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
 import '../services/admob_service.dart';
 import '../services/audio_service.dart';
+import '../services/storage_service.dart';
 import '../utils/constants.dart';
 import '../widgets/ad_banner_widget.dart';
 import '../widgets/tube_widget.dart';
+import '../widgets/tutorial_overlay.dart';
 import 'game_over_screen.dart';
 import 'home_screen.dart';
 import 'shop_screen.dart';
@@ -22,11 +24,13 @@ class _GameScreenState extends State<GameScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pulseController;
   StreamSubscription<String>? _rewardSubscription;
+  bool _showTutorial = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _showTutorial = !StorageService().hasTutorialCompleted();
 
     _pulseController = AnimationController(
       vsync: this,
@@ -82,6 +86,12 @@ class _GameScreenState extends State<GameScreen>
         body: Consumer<GameProvider>(
           builder: (context, game, child) {
             if (game.status == GameStatus.won || game.status == GameStatus.lost) {
+              // Dismiss tutorial immediately if the level ends mid-tutorial
+              // so it never blocks the game-over navigation.
+              if (_showTutorial) {
+                StorageService().markTutorialCompleted();
+                _showTutorial = false;
+              }
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (mounted) {
                   AdMobService().showInterstitialAd();
@@ -92,32 +102,44 @@ class _GameScreenState extends State<GameScreen>
               });
             }
 
-            return Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF1a1a2e),
-                    Color(0xFF16213e),
-                    Color(0xFF0f3460),
-                    Color(0xFF533483),
-                  ],
+            final isLevelOne = (game.currentLevel?.id ?? 0) == 1;
+
+            return Stack(
+              children: [
+                Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFF1a1a2e),
+                        Color(0xFF16213e),
+                        Color(0xFF0f3460),
+                        Color(0xFF533483),
+                      ],
+                    ),
+                  ),
+                  child: SafeArea(
+                    child: Column(
+                      children: [
+                        _buildTopHUD(game),
+                        const SizedBox(height: 8),
+                        const AdBannerWidget(),
+                        const SizedBox(height: 8),
+                        Expanded(child: _buildGameArea(game)),
+                        _buildBottomControls(game),
+                        const SizedBox(height: 10),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    _buildTopHUD(game),
-                    const SizedBox(height: 8),
-                    const AdBannerWidget(),
-                    const SizedBox(height: 8),
-                    Expanded(child: _buildGameArea(game)),
-                    _buildBottomControls(game),
-                    const SizedBox(height: 10),
-                  ],
-                ),
-              ),
+                if (_showTutorial && isLevelOne)
+                  TutorialOverlay(
+                    onComplete: () {
+                      if (mounted) setState(() => _showTutorial = false);
+                    },
+                  ),
+              ],
             );
           },
         ),
