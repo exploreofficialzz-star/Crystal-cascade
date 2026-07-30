@@ -185,12 +185,6 @@ class StorageService {
     return remaining > 0 ? Duration(milliseconds: remaining) : Duration.zero;
   }
 
-  // ─── Tutorial ─────────────────────────────────────────────────────────────
-  bool hasTutorialCompleted() =>
-      _prefs?.getBool('tutorial_completed') ?? false;
-  Future<void> markTutorialCompleted() async =>
-      await _prefs?.setBool('tutorial_completed', true);
-
   // ─── Hints ────────────────────────────────────────────────────────────────
   int getHints() => _prefs?.getInt('hints') ?? GameConstants.startingHints;
   Future<void> setHints(int hints) async =>
