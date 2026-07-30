@@ -12,6 +12,28 @@ class StorageService {
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
+    await _migrateLegacyProgressIfNeeded();
+  }
+
+  /// One-time migration: computes O(1) star count and highest-unlocked-level
+  /// from the old per-level keys so the new infinite-level system has a
+  /// correct starting point for existing players. Skipped on every launch
+  /// after the first because 'total_stars' will already exist.
+  Future<void> _migrateLegacyProgressIfNeeded() async {
+    if (_prefs?.containsKey('total_stars') ?? false) return;
+    int total = 0;
+    int highest = 1;
+    for (int i = 1; i <= 100; i++) {
+      final raw = _prefs?.getString('level_$i');
+      if (raw == null) continue;
+      try {
+        final data = jsonDecode(raw) as Map<String, dynamic>;
+        total += (data['bestStars'] ?? 0) as int;
+        if ((data['unlocked'] == true) && i > highest) highest = i;
+      } catch (_) {}
+    }
+    await _prefs?.setInt('total_stars', total);
+    await _prefs?.setInt('highest_unlocked_level', highest);
   }
 
   // ─── Coins ────────────────────────────────────────────────────────────────
@@ -92,19 +114,21 @@ class StorageService {
   Future<void> setHighScore(int score) async =>
       await _prefs?.setInt('high_score', score);
 
-  int getTotalStars() {
-    int total = 0;
-    for (int i = 1; i <= 100; i++) {
-      final raw = _prefs?.getString('level_$i');
-      if (raw != null) {
-        try {
-          final data = jsonDecode(raw);
-          total += (data['bestStars'] ?? 0) as int;
-        } catch (_) {}
-      }
-    }
-    return total;
+  // O(1) counter — kept in sync by _migrateLegacyProgressIfNeeded on first
+  // launch and addToTotalStars on every level completion thereafter.
+  int getTotalStars() => _prefs?.getInt('total_stars') ?? 0;
+
+  Future<void> addToTotalStars(int delta) async {
+    if (delta <= 0) return;
+    await _prefs?.setInt('total_stars', getTotalStars() + delta);
   }
+
+  // ─── Endless progression ──────────────────────────────────────────────────
+  int getHighestUnlockedId() =>
+      _prefs?.getInt('highest_unlocked_level') ?? 1;
+
+  Future<void> setHighestUnlockedId(int id) async =>
+      await _prefs?.setInt('highest_unlocked_level', id);
 
   // ─── Remove Ads — Tiered with Expiry ──────────────────────────────────────
   //
@@ -135,6 +159,31 @@ class StorageService {
   bool getRemoveAdsPurchased() => isAdsRemoved();
   Future<void> setRemoveAdsPurchased(bool value) async =>
       await _prefs?.setBool('remove_ads', value);
+
+  // ─── Daily Bonus ──────────────────────────────────────────────────────────
+  // Rolling 24-hour cooldown from last claim — not a calendar-day reset,
+  // which would still let someone claim at 11:59 pm and again at midnight.
+
+  Future<void> claimDailyBonus() async => await _prefs?.setInt(
+      'daily_bonus_last_claimed', DateTime.now().millisecondsSinceEpoch);
+
+  int _dailyBonusLastClaimed() =>
+      _prefs?.getInt('daily_bonus_last_claimed') ?? 0;
+
+  bool canClaimDailyBonus() {
+    final last = _dailyBonusLastClaimed();
+    if (last == 0) return true;
+    final elapsed = DateTime.now().millisecondsSinceEpoch - last;
+    return elapsed >= GameConstants.dailyBonusCooldownMs;
+  }
+
+  Duration getDailyBonusTimeRemaining() {
+    final last = _dailyBonusLastClaimed();
+    if (last == 0) return Duration.zero;
+    final readyAt = last + GameConstants.dailyBonusCooldownMs;
+    final remaining = readyAt - DateTime.now().millisecondsSinceEpoch;
+    return remaining > 0 ? Duration(milliseconds: remaining) : Duration.zero;
+  }
 
   // ─── Tutorial ─────────────────────────────────────────────────────────────
   bool hasTutorialCompleted() =>
