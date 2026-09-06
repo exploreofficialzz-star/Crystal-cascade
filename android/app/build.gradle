@@ -20,7 +20,7 @@ if (flutterVersionName == null) { flutterVersionName = '1.0' }
 
 android {
     namespace "com.chastechgroup.crystalcascade"
-    compileSdkVersion 35
+    compileSdkVersion 36
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -36,7 +36,7 @@ android {
     defaultConfig {
         applicationId "com.chastechgroup.crystalcascade"
         minSdkVersion 21
-        targetSdkVersion 35
+        targetSdkVersion 36
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
@@ -83,10 +83,18 @@ android {
 
     // ── Globally exclude the deprecated monolithic play:core.
     //    The new split libraries (app-update, review) replace it fully
-    //    and are compatible with targetSdkVersion 34/35.
+    //    and are compatible with targetSdkVersion 36.
+    //
+    // ── Force Google Play Billing Library 8.0.0 (Play Console requirement,
+    //    effective August 31 2026) regardless of what the flutter in_app_purchase
+    //    plugin or any transitive dependency requests.
     configurations.all {
         exclude group: 'com.google.android.play', module: 'core'
         exclude group: 'com.google.android.play', module: 'core-ktx'
+        resolutionStrategy {
+            force 'com.android.billingclient:billing:8.0.0'
+            force 'com.android.billingclient:billing-ktx:8.0.0'
+        }
     }
 }
 
