@@ -21,7 +21,12 @@ if (flutterVersionName == null) { flutterVersionName = '1.0' }
 android {
     namespace "com.chastechgroup.crystalcascade"
     compileSdkVersion 36
-    ndkVersion flutter.ndkVersion
+    // Hard-pin NDK: flutter.ndkVersion resolves to 23.1.7779620 (bundled with
+    // the Flutter SDK), but audioplayers, google_mobile_ads, in_app_purchase,
+    // connectivity_plus, flutter_local_notifications, path_provider, and
+    // shared_preferences all require NDK 25.1.8937393. NDK versions are
+    // backward compatible, so 25 can build targets that needed 23.
+    ndkVersion "25.1.8937393"
 
     compileOptions {
         coreLibraryDesugaringEnabled true
@@ -112,9 +117,9 @@ dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
 
     // Kotlin stdlib: version must match the kotlin-android plugin version in
-    // settings.gradle (currently 1.9.24). kotlin-stdlib-jdk8 is merged into
+    // settings.gradle (currently 2.1.0). kotlin-stdlib-jdk8 is merged into
     // the main stdlib since Kotlin 1.8, so only one artifact is needed.
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.24"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.1.0"
 
     implementation 'androidx.multidex:multidex:2.0.1'
     implementation 'androidx.appcompat:appcompat:1.7.0'
