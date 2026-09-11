@@ -18,7 +18,7 @@ pluginManagement {
 
 plugins {
     id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-    id "com.android.application" version "8.3.0" apply false
+    id "com.android.application" version "8.7.3" apply false
     // 2.1.0 is required: billing-ktx 8.0.0 (Play Console enforcement Aug 2026)
     // was compiled with Kotlin metadata 2.1.0. Using 1.9.x caused:
     //   "Module was compiled with an incompatible version of Kotlin.
