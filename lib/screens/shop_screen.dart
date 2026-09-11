@@ -25,8 +25,12 @@ class _ShopScreenState extends State<ShopScreen> {
   final ScrollController _scrollCtrl = ScrollController();
 
   StreamSubscription<IAPResult>? _iapSub;
+  StreamSubscription<String>? _rewardSub;
+
   String? _purchasingId; // product currently being purchased
   bool _claimingDaily = false; // guards a fast double-tap during the async claim write
+  bool _watchingAdForCoins = false; // prevents double-tap on Watch Video → Coins
+  bool _watchingAdForHint = false;  // prevents double-tap on Watch Video → Hint
 
   // Key used to scroll to Remove Ads section
   final GlobalKey _removeAdsKey = GlobalKey();
@@ -35,6 +39,7 @@ class _ShopScreenState extends State<ShopScreen> {
   void initState() {
     super.initState();
     _listenToIAP();
+    _listenToAdRewards();
 
     // Scroll to Remove Ads after first frame if requested
     if (widget.scrollToRemoveAds) {
@@ -54,6 +59,30 @@ class _ShopScreenState extends State<ShopScreen> {
         _snack('✅ Purchase successful!', Colors.greenAccent);
       } else if (result.error != null) {
         _snack('❌ ${result.error}', Colors.redAccent);
+      }
+    });
+  }
+
+  // Subscribe to ad rewards with type filtering — avoids the dangerous .first
+  // pattern which could fire for the wrong reward type or hang indefinitely.
+  void _listenToAdRewards() {
+    _rewardSub = AdMobService().onRewardEarned.listen((type) {
+      if (!mounted) return;
+
+      switch (type) {
+        case 'coins':
+          if (_watchingAdForCoins) {
+            _watchingAdForCoins = false;
+            context.read<GameProvider>().claimRewardCoins(20);
+            _snack('🪙 +20 coins!', Colors.amber);
+          }
+
+        case 'hint':
+          if (_watchingAdForHint) {
+            _watchingAdForHint = false;
+            context.read<GameProvider>().addHints(1);
+            _snack('💡 You got 1 hint!', Colors.amber);
+          }
       }
     });
   }
@@ -80,6 +109,10 @@ class _ShopScreenState extends State<ShopScreen> {
   /// Triggers a real store purchase. Shows loading on the tapped card.
   void _buy(String productId) async {
     if (_purchasingId != null) return; // block double-tap
+    if (!IAPService().isProductAvailable(productId)) {
+      _snack('⚠️ This product is not available yet. Try again later.', Colors.orangeAccent);
+      return;
+    }
     setState(() => _purchasingId = productId);
     await IAPService().buyProduct(context, productId);
     // Result handled by stream listener above
@@ -88,6 +121,7 @@ class _ShopScreenState extends State<ShopScreen> {
   @override
   void dispose() {
     _iapSub?.cancel();
+    _rewardSub?.cancel();
     _scrollCtrl.dispose();
     super.dispose();
   }
@@ -130,6 +164,10 @@ class _ShopScreenState extends State<ShopScreen> {
                       _buildBalanceCard(game),
                       const SizedBox(height: 24),
 
+                      // ── Store availability notice ───────────────────────
+                      if (!IAPService().isAvailable)
+                        _storeUnavailableNotice(),
+
                       // ── Free Coins ─────────────────────────────────────
                       _sectionTitle('Free Coins'),
                       _freeCard(
@@ -137,10 +175,14 @@ class _ShopScreenState extends State<ShopScreen> {
                         'Get 20 coins free',
                         Icons.play_circle_fill,
                         Colors.purpleAccent,
-                        () {
-                          AdMobService().showRewardedAd(type: 'coins');
-                          game.claimRewardCoins(20);
-                        },
+                        _watchingAdForCoins
+                            ? null // already watching
+                            : () {
+                                setState(() => _watchingAdForCoins = true);
+                                AdMobService().showRewardedAd(type: 'coins');
+                                // Coins are granted by _listenToAdRewards when
+                                // the reward fires — NOT here.
+                              },
                       ),
                       const SizedBox(height: 8),
                       _freeCard(
@@ -173,7 +215,7 @@ class _ShopScreenState extends State<ShopScreen> {
 
                       // ── Hints ──────────────────────────────────────────
                       _sectionTitle('Hints  (you have ${game.hints})'),
-                      _hintAdCard(game),
+                      _hintAdCard(),
                       const SizedBox(height: 8),
                       _premiumCard(
                         productId: IAPService.hintPackSmallId,
@@ -263,6 +305,29 @@ class _ShopScreenState extends State<ShopScreen> {
     );
   }
 
+  // ─── Store unavailable notice ─────────────────────────────────────────────
+  Widget _storeUnavailableNotice() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.orangeAccent.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orangeAccent.withOpacity(0.5), width: 1),
+      ),
+      child: const Row(children: [
+        Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 20),
+        SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            'Store is unavailable. Purchases are disabled until connectivity is restored.',
+            style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+          ),
+        ),
+      ]),
+    );
+  }
+
   // ─── Balance card ─────────────────────────────────────────────────────────
   Widget _buildBalanceCard(GameProvider game) {
     return Container(
@@ -305,48 +370,54 @@ class _ShopScreenState extends State<ShopScreen> {
   }
 
   // ─── Hint watch-ad card ───────────────────────────────────────────────────
-  Widget _hintAdCard(GameProvider game) {
+  Widget _hintAdCard() {
     return GestureDetector(
-      onTap: () {
-        AdMobService().onRewardEarned.first.then((_) {
-          game.addHints(1);
-          _snack('💡 You got 1 hint!', Colors.amber);
-        });
-        AdMobService().showRewardedAd(type: 'hint');
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(12),
-          border:
-              Border.all(color: Colors.yellowAccent.withOpacity(0.3), width: 1),
-        ),
-        child: Row(children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-                color: Colors.yellowAccent.withOpacity(0.2),
-                shape: BoxShape.circle),
-            child: const Icon(Icons.play_circle_fill,
-                color: Colors.yellowAccent, size: 24),
+      onTap: _watchingAdForHint
+          ? null
+          : () {
+              setState(() => _watchingAdForHint = true);
+              AdMobService().showRewardedAd(type: 'hint');
+              // Hint is granted by _listenToAdRewards when the reward fires.
+            },
+      child: AnimatedOpacity(
+        opacity: _watchingAdForHint ? 0.5 : 1.0,
+        duration: const Duration(milliseconds: 200),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(12),
+            border:
+                Border.all(color: Colors.yellowAccent.withOpacity(0.3), width: 1),
           ),
-          const SizedBox(width: 16),
-          const Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Watch Video',
-                  style: TextStyle(
+          child: Row(children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                  color: Colors.yellowAccent.withOpacity(0.2),
+                  shape: BoxShape.circle),
+              child: const Icon(Icons.play_circle_fill,
+                  color: Colors.yellowAccent, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                  _watchingAdForHint ? 'Ad loading…' : 'Watch Video',
+                  style: const TextStyle(
                       color: Colors.white,
                       fontSize: 16,
-                      fontWeight: FontWeight.bold)),
-              Text('Get 1 free hint',
-                  style: TextStyle(color: Colors.white60, fontSize: 13)),
-            ]),
-          ),
-          const Icon(Icons.arrow_forward_ios,
-              color: Colors.yellowAccent, size: 16),
-        ]),
+                      fontWeight: FontWeight.bold),
+                ),
+                const Text('Get 1 free hint',
+                    style: TextStyle(color: Colors.white60, fontSize: 13)),
+              ]),
+            ),
+            const Icon(Icons.arrow_forward_ios,
+                color: Colors.yellowAccent, size: 16),
+          ]),
+        ),
       ),
     );
   }
@@ -394,10 +465,11 @@ class _ShopScreenState extends State<ShopScreen> {
   }) {
     final isActive = _storage.getRemoveAdsTier() == tier && _storage.isAdsRemoved();
     final isLoading = _purchasingId == productId;
+    final isAvailable = IAPService().isProductAvailable(productId);
     final price = IAPService().priceFor(productId);
 
     return GestureDetector(
-      onTap: isActive || isLoading ? null : () => _buy(productId),
+      onTap: isActive || isLoading || !isAvailable ? null : () => _buy(productId),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.all(16),
@@ -405,46 +477,44 @@ class _ShopScreenState extends State<ShopScreen> {
           gradient: LinearGradient(colors: [
             isActive
                 ? Colors.greenAccent.withOpacity(0.15)
-                : color.withOpacity(0.12),
+                : color.withOpacity(isAvailable ? 0.12 : 0.05),
             color.withOpacity(0.04),
           ]),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: isActive
                 ? Colors.greenAccent.withOpacity(0.6)
-                : color.withOpacity(0.45),
+                : color.withOpacity(isAvailable ? 0.45 : 0.2),
             width: isActive ? 2 : 1.5,
           ),
-          boxShadow: [BoxShadow(color: color.withOpacity(0.1), blurRadius: 12)],
+          boxShadow: [BoxShadow(color: color.withOpacity(isAvailable ? 0.1 : 0.03), blurRadius: 12)],
         ),
         child: Row(children: [
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
                 Text(label,
-                    style: const TextStyle(
-                        color: Colors.white,
+                    style: TextStyle(
+                        color: isAvailable ? Colors.white : Colors.white38,
                         fontSize: 16,
                         fontWeight: FontWeight.bold)),
-                if (badge != null) ...[
-                  const SizedBox(width: 8),
-                  _badge(badge, color),
-                ],
-                if (isActive) ...[
-                  const SizedBox(width: 8),
-                  _badge('ACTIVE', Colors.greenAccent),
-                ],
+                if (badge != null) ...[ const SizedBox(width: 8), _badge(badge, color) ],
+                if (isActive) ...[ const SizedBox(width: 8), _badge('ACTIVE', Colors.greenAccent) ],
               ]),
               const SizedBox(height: 4),
               Text(description,
                   style: TextStyle(
-                      color: Colors.white.withOpacity(0.55), fontSize: 12)),
+                      color: Colors.white.withOpacity(isAvailable ? 0.55 : 0.3),
+                      fontSize: 12)),
+              if (!isAvailable && IAPService().isAvailable)
+                const Text('Coming soon',
+                    style: TextStyle(color: Colors.white38, fontSize: 10)),
             ]),
           ),
           const SizedBox(width: 12),
           _priceChip(
-            isActive ? '✓' : price,
-            isActive ? Colors.greenAccent : color,
+            isActive ? '✓' : (isAvailable ? price : '—'),
+            isActive ? Colors.greenAccent : (isAvailable ? color : Colors.white24),
             isLoading: isLoading,
           ),
         ]),
@@ -462,52 +532,62 @@ class _ShopScreenState extends State<ShopScreen> {
     String? badge,
   }) {
     final isLoading = _purchasingId == productId;
+    final isAvailable = IAPService().isProductAvailable(productId);
     final price = IAPService().priceFor(productId);
 
     return GestureDetector(
-      onTap: isLoading ? null : () => _buy(productId),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [
-            color.withOpacity(0.15),
-            color.withOpacity(0.05),
-          ]),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.4), width: 1.5),
-          boxShadow: [BoxShadow(color: color.withOpacity(0.1), blurRadius: 10)],
-        ),
-        child: Row(children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration:
-                BoxDecoration(color: color.withOpacity(0.2), shape: BoxShape.circle),
-            child: Icon(icon, color: color, size: 24),
+      onTap: isLoading || !isAvailable ? null : () => _buy(productId),
+      child: AnimatedOpacity(
+        opacity: isAvailable ? 1.0 : 0.5,
+        duration: const Duration(milliseconds: 200),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [
+              color.withOpacity(isAvailable ? 0.15 : 0.06),
+              color.withOpacity(0.05),
+            ]),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withOpacity(isAvailable ? 0.4 : 0.15), width: 1.5),
+            boxShadow: [BoxShadow(color: color.withOpacity(isAvailable ? 0.1 : 0.03), blurRadius: 10)],
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    Text(title,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold)),
-                    if (badge != null) ...[
-                      const SizedBox(width: 6),
-                      _badge(badge, color),
-                    ],
+          child: Row(children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration:
+                  BoxDecoration(color: color.withOpacity(0.2), shape: BoxShape.circle),
+              child: Icon(icon, color: color, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Text(title,
+                          style: TextStyle(
+                              color: isAvailable ? Colors.white : Colors.white38,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold)),
+                      if (badge != null) ...[ const SizedBox(width: 6), _badge(badge, color) ],
+                    ]),
+                    Text(subtitle,
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(isAvailable ? 0.6 : 0.3),
+                            fontSize: 12)),
+                    if (!isAvailable && IAPService().isAvailable)
+                      const Text('Coming soon',
+                          style: TextStyle(color: Colors.white38, fontSize: 10)),
                   ]),
-                  Text(subtitle,
-                      style: TextStyle(
-                          color: Colors.white.withOpacity(0.6), fontSize: 12)),
-                ]),
-          ),
-          _priceChip(price, color, isLoading: isLoading),
-        ]),
+            ),
+            _priceChip(
+              isAvailable ? price : '—',
+              isAvailable ? color : Colors.white24,
+              isLoading: isLoading,
+            ),
+          ]),
+        ),
       ),
     );
   }
@@ -557,41 +637,46 @@ class _ShopScreenState extends State<ShopScreen> {
   }
 
   Widget _freeCard(String title, String subtitle, IconData icon, Color color,
-      VoidCallback onTap) {
+      VoidCallback? onTap) {
+    final isDisabled = onTap == null;
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.3), width: 1),
+      child: AnimatedOpacity(
+        opacity: isDisabled ? 0.55 : 1.0,
+        duration: const Duration(milliseconds: 200),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withOpacity(0.3), width: 1),
+          ),
+          child: Row(children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration:
+                  BoxDecoration(color: color.withOpacity(0.2), shape: BoxShape.circle),
+              child: Icon(icon, color: color, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold)),
+                    Text(subtitle,
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.6), fontSize: 13)),
+                  ]),
+            ),
+            Icon(Icons.arrow_forward_ios, color: color.withOpacity(0.5), size: 16),
+          ]),
         ),
-        child: Row(children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration:
-                BoxDecoration(color: color.withOpacity(0.2), shape: BoxShape.circle),
-            child: Icon(icon, color: color, size: 24),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold)),
-                  Text(subtitle,
-                      style: TextStyle(
-                          color: Colors.white.withOpacity(0.6), fontSize: 13)),
-                ]),
-          ),
-          Icon(Icons.arrow_forward_ios, color: color.withOpacity(0.5), size: 16),
-        ]),
       ),
     );
   }

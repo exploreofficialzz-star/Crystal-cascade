@@ -21,10 +21,10 @@ class AdMobService {
   NativeAd?              _nativeAd;
 
   // ── Retry counters ────────────────────────────────────────────────────────
-  int _interstitialRetries        = 0;
-  int _rewardedRetries            = 0;
+  int _interstitialRetries         = 0;
+  int _rewardedRetries             = 0;
   int _rewardedInterstitialRetries = 0;
-  static const int _maxRetries    = 3;
+  static const int _maxRetries     = 3;
 
   // ── Interstitial cooldown (policy: min 30 s between fullscreen ads) ───────
   DateTime? _lastInterstitialShown;
@@ -57,8 +57,16 @@ class AdMobService {
   }
 
   // ─── BANNER ───────────────────────────────────────────────────────────────
-  /// Returns a loaded BannerAd or null if ads removed.
-  BannerAd? createBannerAd() {
+  /// Creates and loads a BannerAd. Returns null if ads are removed.
+  ///
+  /// [onLoaded]  called (on the widget) when the ad finishes loading.
+  /// [onFailed]  called (on the widget) when the ad fails to load.
+  ///
+  /// The widget MUST NOT call `.load()` again — this method already starts it.
+  BannerAd? createBannerAd({
+    VoidCallback? onLoaded,
+    VoidCallback? onFailed,
+  }) {
     if (adsRemoved) return null;
     _bannerAd?.dispose();
     _bannerAd = BannerAd(
@@ -66,16 +74,20 @@ class AdMobService {
       size: AdSize.banner,
       request: const AdRequest(),
       listener: BannerAdListener(
-        onAdLoaded: (_) => debugPrint('[Ad] Banner loaded'),
+        onAdLoaded: (_) {
+          debugPrint('[Ad] Banner loaded');
+          onLoaded?.call();
+        },
         onAdFailedToLoad: (ad, error) {
           debugPrint('[Ad] Banner failed: ${error.message} (code ${error.code})');
+          onFailed?.call();
           ad.dispose();
           // Error code 2 = network error — likely ad blocker
           if (error.code == 2) AdBlockService().recheck();
         },
       ),
     );
-    _bannerAd!.load();
+    _bannerAd!.load(); // load once here; widget must not call load() again
     return _bannerAd;
   }
 

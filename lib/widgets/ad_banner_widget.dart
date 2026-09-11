@@ -20,14 +20,17 @@ class _AdBannerWidgetState extends State<AdBannerWidget> {
   }
 
   void _loadAd() {
-    _bannerAd = AdMobService().createBannerAd();
-    if (_bannerAd != null) {
-      _bannerAd!.load().then((_) {
-        if (mounted) {
-          setState(() => _isLoaded = true);
-        }
-      });
-    }
+    // createBannerAd() already calls .load() internally.
+    // We receive the result via the callbacks — do NOT call .load() here.
+    _bannerAd = AdMobService().createBannerAd(
+      onLoaded: () {
+        if (mounted) setState(() => _isLoaded = true);
+      },
+      onFailed: () {
+        // Ad failed — stay hidden (SizedBox.shrink below)
+        if (mounted) setState(() => _isLoaded = false);
+      },
+    );
   }
 
   @override
@@ -39,7 +42,7 @@ class _AdBannerWidgetState extends State<AdBannerWidget> {
   @override
   Widget build(BuildContext context) {
     if (!_isLoaded || _bannerAd == null) {
-      return const SizedBox(height: 0);
+      return const SizedBox.shrink();
     }
 
     return Container(

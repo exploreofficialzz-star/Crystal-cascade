@@ -31,8 +31,14 @@ class IAPService {
       StreamController<IAPResult>.broadcast();
 
   final Map<String, ProductDetails> _products = {};
+
+  // Products reported as missing by the store on last query.
+  // Non-empty means they haven't been published in Play Console yet.
+  final Set<String> _notFoundIds = {};
+
   bool _isAvailable = false;
   bool _initialized = false;
+  bool _loadingProducts = false; // prevents concurrent load calls
 
   // ─── Product IDs ───────────────────────────────────────────────────────────
   // These MUST match exactly what you create in:
@@ -59,6 +65,12 @@ class IAPService {
   // ─── Public API ────────────────────────────────────────────────────────────
   bool get isAvailable => _isAvailable;
   Stream<IAPResult> get purchaseResultStream => _resultCtrl.stream;
+
+  /// True when at least one product successfully loaded from the store.
+  bool get areProductsLoaded => _products.isNotEmpty;
+
+  /// True when this specific product was returned by the store.
+  bool isProductAvailable(String productId) => _products.containsKey(productId);
 
   /// Real store price for a product. Falls back to our constant if not loaded.
   String priceFor(String productId) =>
@@ -87,30 +99,53 @@ class IAPService {
     await _iap.restorePurchases();
   }
 
-  Future<void> _loadProducts() async {
+  Future<void> _loadProducts({int attempt = 1}) async {
+    if (_loadingProducts) return;
+    _loadingProducts = true;
+
     try {
-      final response = await _iap.queryProductDetails(allProductIds);
+      final response = await _iap
+          .queryProductDetails(allProductIds)
+          .timeout(const Duration(seconds: 15));
 
       if (response.error != null) {
         debugPrint('[IAP] Query error: ${response.error?.message}');
       }
+
       if (response.notFoundIDs.isNotEmpty) {
-        debugPrint('[IAP] Not found in store: ${response.notFoundIDs}');
-        debugPrint('[IAP] → Create these in Play Console / App Store Connect');
+        _notFoundIds
+          ..clear()
+          ..addAll(response.notFoundIDs);
+        debugPrint(
+          '[IAP] ⚠️  Products NOT found in store (${response.notFoundIDs.length}): '
+          '${response.notFoundIDs.join(', ')}\n'
+          '[IAP] → Create & publish these in Play Console / App Store Connect.',
+        );
+      } else {
+        _notFoundIds.clear();
       }
 
       for (final p in response.productDetails) {
         _products[p.id] = p;
-        debugPrint('[IAP] Loaded: ${p.id} @ ${p.price}');
+        debugPrint('[IAP] ✅ Loaded: ${p.id} @ ${p.price}');
+      }
+    } on TimeoutException {
+      debugPrint('[IAP] _loadProducts timed out (attempt $attempt)');
+      // Retry once after a short delay, then give up
+      if (attempt < 2) {
+        await Future.delayed(const Duration(seconds: 4));
+        _loadingProducts = false;
+        await _loadProducts(attempt: attempt + 1);
+        return;
       }
     } catch (e) {
       debugPrint('[IAP] _loadProducts error: $e');
+    } finally {
+      _loadingProducts = false;
     }
   }
 
   // ─── Trigger a purchase ────────────────────────────────────────────────────
-  // context is kept in the signature so call sites don't need to change,
-  // but it's unused now — every purchase goes through Play Billing.
   Future<void> buyProduct(BuildContext context, String productId) async {
     if (!_isAvailable) {
       _resultCtrl.add(IAPResult(
@@ -121,26 +156,29 @@ class IAPService {
       return;
     }
 
+    // Try to load products if none are in cache yet
+    if (!areProductsLoaded) {
+      await _loadProducts();
+    }
+
     final product = _products[productId];
     if (product == null) {
-      // Products not loaded yet — try reloading
-      await _loadProducts();
-      final retried = _products[productId];
-      if (retried == null) {
-        _resultCtrl.add(IAPResult(
-          success: false,
-          productId: productId,
-          error:
-              'Product not found. Make sure it is published in the store and '
-              'you have an internet connection.',
-        ));
-        return;
-      }
+      final isNotFound = _notFoundIds.contains(productId);
+      _resultCtrl.add(IAPResult(
+        success: false,
+        productId: productId,
+        error: isNotFound
+            ? 'This product has not been published in the store yet. '
+              'Please try again after an app update.'
+            : 'Product unavailable. Check your internet connection and try again.',
+      ));
+      return;
     }
 
     try {
-      final param = PurchaseParam(productDetails: _products[productId]!);
-      // All products are consumable — can be rebought (e.g. extend remove-ads timer)
+      final param = PurchaseParam(productDetails: product);
+      // All products are consumable — can be rebought (e.g. to extend the
+      // remove-ads timer or top-up hint/coin packs multiple times).
       await _iap.buyConsumable(purchaseParam: param);
     } catch (e) {
       debugPrint('[IAP] buyProduct error: $e');
@@ -151,7 +189,6 @@ class IAPService {
       ));
     }
   }
-
 
   Future<void> _onPurchaseUpdates(
       List<PurchaseDetails> purchaseDetailsList) async {
@@ -237,8 +274,8 @@ class IAPService {
   }
 
   // ─── Verification ─────────────────────────────────────────────────────────
-  // For production add server-side receipt validation via Google Play / App Store API.
-  // For indie games trusting the SDK is standard practice.
+  // For production: add server-side receipt validation via Google Play /
+  // App Store API. For indie games trusting the SDK is standard practice.
   Future<bool> _verifyPurchase(PurchaseDetails purchase) async => true;
 
   // ─── Restore (called from shop UI) ────────────────────────────────────────
@@ -254,8 +291,8 @@ class IAPService {
         removeAdsMonthId   => GameConstants.removeAdsMonthPrice,
         hintPackSmallId    => GameConstants.hintPackSmallPrice,
         hintPackLargeId    => GameConstants.hintPackLargePrice,
-        coinPackStarterId  => '\$0.99',
-        megaPackId         => '\$4.99',
+        coinPackStarterId  => r'$0.99',
+        megaPackId         => r'$4.99',
         _                  => '',
       };
 

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ (API 31+) data extraction rules.
+    Required companion to android:fullBackupContent in AndroidManifest.xml.
+
+    Game progress (coins, level unlocks, hints, settings) lives in
+    SharedPreferences and IS valuable to back up so players don't lose
+    progress when switching devices. No exclusions are needed.
+
+    Sensitive credentials are never written to SharedPreferences —
+    IAP is handled server-side by the Play Store, not stored here.
+-->
+<data-extraction-rules>
+    <!-- Google Drive automatic cloud backup -->
+    <cloud-backup>
+        <!-- Include all SharedPreferences (game progress + settings). -->
+        <!-- No exclusions — no sensitive keys are stored here. -->
+    </cloud-backup>
+
+    <!-- Device-to-device transfer (Quick Switch Adapter / cable setup) -->
+    <device-transfer>
+        <!-- Allow full progress transfer when player switches phones. -->
+    </device-transfer>
+</data-extraction-rules>

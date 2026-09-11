@@ -49,6 +49,9 @@ android {
             def envKeyAlias         = System.getenv("KEY_ALIAS")
             def envKeyPassword      = System.getenv("KEY_PASSWORD")
 
+            // Only configure release signing if ALL four env vars are present.
+            // Missing any one will produce an unsigned APK rather than a
+            // signing error, which is the safer CI fallback.
             if (envKeystorePath && envKeystorePassword && envKeyAlias && envKeyPassword) {
                 storeFile     = file("${rootProject.projectDir}/app/${envKeystorePath}")
                 storePassword = envKeystorePassword
@@ -88,6 +91,11 @@ android {
     // ── Force Google Play Billing Library 8.0.0 (Play Console requirement,
     //    effective August 31 2026) regardless of what the flutter in_app_purchase
     //    plugin or any transitive dependency requests.
+    //
+    //    IMPORTANT: Ensure the in_app_purchase pub package version you resolve
+    //    via `flutter pub get` is compatible with billing 8.0.0 at runtime.
+    //    Run `flutter pub upgrade in_app_purchase` to get the latest 3.x which
+    //    includes the billing 8.0 support from the Flutter team.
     configurations.all {
         exclude group: 'com.google.android.play', module: 'core'
         exclude group: 'com.google.android.play', module: 'core-ktx'
@@ -102,9 +110,20 @@ flutter { source '../..' }
 
 dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0"
+
+    // Kotlin stdlib: version must match the kotlin-android plugin version in
+    // settings.gradle (currently 1.9.24). kotlin-stdlib-jdk8 is merged into
+    // the main stdlib since Kotlin 1.8, so only one artifact is needed.
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.24"
+
     implementation 'androidx.multidex:multidex:2.0.1'
     implementation 'androidx.appcompat:appcompat:1.7.0'
+
+    // Play Billing Library 8.0.0 — explicit dep so Gradle downloads the
+    // correct POM before the resolutionStrategy force applies. The in_app_purchase
+    // Flutter plugin brings this in transitively; the force above pins its version.
+    implementation 'com.android.billingclient:billing:8.0.0'
+    implementation 'com.android.billingclient:billing-ktx:8.0.0'
 
     // SDK-34/35-compatible Play Core split libraries.
     // Non-KTX only — avoids duplicate class conflict with core-ktx.
