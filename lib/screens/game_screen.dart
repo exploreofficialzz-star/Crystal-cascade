@@ -1,16 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../managers/character_reaction_manager.dart';
-import '../managers/environment_reaction_manager.dart';
 import '../providers/game_provider.dart';
 import '../services/admob_service.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
 import '../utils/constants.dart';
 import '../widgets/ad_banner_widget.dart';
-import '../widgets/crystal_guardian_widget.dart';
-import '../widgets/living_background_widget.dart';
 import '../widgets/tube_widget.dart';
 import '../widgets/tutorial_overlay.dart';
 import 'game_over_screen.dart';
@@ -19,16 +15,15 @@ import 'shop_screen.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
+
   @override
   State<GameScreen> createState() => _GameScreenState();
 }
 
 class _GameScreenState extends State<GameScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  late AnimationController        _pulseController;
-  StreamSubscription<String>?     _rewardSubscription;
-  late CharacterReactionManager   _charManager;
-  late EnvironmentReactionManager _envManager;
+  late AnimationController _pulseController;
+  StreamSubscription<String>? _rewardSubscription;
   bool _showTutorial = false;
 
   @override
@@ -41,18 +36,6 @@ class _GameScreenState extends State<GameScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
-
-    // Reaction managers – created here so they live as long as the screen.
-    _charManager = CharacterReactionManager();
-    _envManager  = EnvironmentReactionManager();
-
-    // Subscribe managers to the game event stream after first frame.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final game = context.read<GameProvider>();
-      _charManager.subscribe(game.eventStream);
-      _envManager.subscribe(game.eventStream);
-    });
 
     _rewardSubscription = AdMobService().onRewardEarned.listen((type) {
       if (!mounted || type != 'extra_moves') return;
@@ -72,8 +55,6 @@ class _GameScreenState extends State<GameScreen>
     WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     _rewardSubscription?.cancel();
-    _charManager.dispose();
-    _envManager.dispose();
     super.dispose();
   }
 
@@ -89,99 +70,83 @@ class _GameScreenState extends State<GameScreen>
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider<CharacterReactionManager>.value(value: _charManager),
-        ChangeNotifierProvider<EnvironmentReactionManager>.value(value: _envManager),
-      ],
-      child: PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (bool didPop, dynamic result) {
-          if (didPop) return;
-          final game = context.read<GameProvider>();
-          if (game.status == GameStatus.playing) {
-            game.pauseGame();
-            _showPauseMenu(context);
-          } else {
-            Navigator.of(context).pop();
-          }
-        },
-        child: Scaffold(
-          body: Consumer<GameProvider>(
-            builder: (context, game, child) {
-              if (game.status == GameStatus.won || game.status == GameStatus.lost) {
-                if (_showTutorial) {
-                  StorageService().markTutorialCompleted();
-                  _showTutorial = false;
-                }
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) {
-                    AdMobService().showInterstitialAd();
-                    Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(builder: (_) => const GameOverScreen()),
-                    );
-                  }
-                });
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (bool didPop, dynamic result) {
+        if (didPop) return;
+        final game = context.read<GameProvider>();
+        if (game.status == GameStatus.playing) {
+          game.pauseGame();
+          _showPauseMenu(context);
+        } else {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        body: Consumer<GameProvider>(
+          builder: (context, game, child) {
+            if (game.status == GameStatus.won || game.status == GameStatus.lost) {
+              // Dismiss tutorial immediately if the level ends mid-tutorial
+              // so it never blocks the game-over navigation.
+              if (_showTutorial) {
+                StorageService().markTutorialCompleted();
+                _showTutorial = false;
               }
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  AdMobService().showInterstitialAd();
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(builder: (_) => const GameOverScreen()),
+                  );
+                }
+              });
+            }
 
-              final isLevelOne = (game.currentLevel?.id ?? 0) == 1;
+            final isLevelOne = (game.currentLevel?.id ?? 0) == 1;
 
-              return Stack(
-                fit: StackFit.expand,
-                children: [
-                  // ── Layer 0: Living parallax background ─────────────
-                  const LivingBackgroundWidget(),
-
-                  // ── Layer 1: Game UI ────────────────────────────────
-                  SafeArea(
+            return Stack(
+              children: [
+                Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFF1a1a2e),
+                        Color(0xFF16213e),
+                        Color(0xFF0f3460),
+                        Color(0xFF533483),
+                      ],
+                    ),
+                  ),
+                  child: SafeArea(
                     child: Column(
                       children: [
                         _buildTopHUD(game),
-                        const SizedBox(height: 6),
+                        const SizedBox(height: 8),
                         const AdBannerWidget(),
-                        const SizedBox(height: 6),
-                        // ── Game area + Guardian ─────────────────────
-                        Expanded(
-                          child: Stack(
-                            children: [
-                              // Tube board with subtle 2.5D perspective
-                              Positioned.fill(
-                                child: _buildGameArea(game),
-                              ),
-                              // Crystal Guardian – secondary, bottom-right
-                              Positioned(
-                                right:  6,
-                                bottom: 8,
-                                width:  82,
-                                height: 170,
-                                child: const CrystalGuardianWidget(),
-                              ),
-                            ],
-                          ),
-                        ),
+                        const SizedBox(height: 8),
+                        Expanded(child: _buildGameArea(game)),
                         _buildBottomControls(game),
                         const SizedBox(height: 10),
                       ],
                     ),
                   ),
-
-                  // ── Layer 2: Tutorial overlay ────────────────────────
-                  if (_showTutorial && isLevelOne)
-                    TutorialOverlay(
-                      onComplete: () {
-                        if (mounted) setState(() => _showTutorial = false);
-                      },
-                    ),
-                ],
-              );
-            },
-          ),
+                ),
+                if (_showTutorial && isLevelOne)
+                  TutorialOverlay(
+                    onComplete: () {
+                      if (mounted) setState(() => _showTutorial = false);
+                    },
+                  ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 
-  // ── HUD ────────────────────────────────────────────────────────────────────
   Widget _buildTopHUD(GameProvider game) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -195,36 +160,32 @@ class _GameScreenState extends State<GameScreen>
                 Text(
                   'Level ${game.currentLevel?.id ?? 1}',
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    shadows: [Shadow(color: Colors.black45, blurRadius: 6)],
-                  ),
+                      color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 4),
                 AnimatedBuilder(
                   animation: _pulseController,
-                  builder: (context, _) {
+                  builder: (context, child) {
                     final isLow = game.movesRemaining <= 3;
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                       decoration: BoxDecoration(
                         color: isLow
-                            ? Colors.red.withOpacity(0.30 + _pulseController.value * 0.30)
-                            : Colors.black.withOpacity(0.35),
+                            ? Colors.red.withOpacity(0.3 + _pulseController.value * 0.3)
+                            : Colors.black.withOpacity(0.3),
                         borderRadius: BorderRadius.circular(15),
                         border: Border.all(
                           color: isLow
-                              ? Colors.redAccent.withOpacity(0.80)
-                              : Colors.white.withOpacity(0.22),
+                              ? Colors.redAccent.withOpacity(0.8)
+                              : Colors.white.withOpacity(0.2),
                           width: 1,
                         ),
                       ),
                       child: Text(
                         'Moves: ${game.movesRemaining}',
                         style: TextStyle(
-                          color:      isLow ? Colors.redAccent : Colors.white,
-                          fontSize:   14,
+                          color: isLow ? Colors.redAccent : Colors.white,
+                          fontSize: 14,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -247,60 +208,74 @@ class _GameScreenState extends State<GameScreen>
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width:  44,
+        width: 44,
         height: 44,
         decoration: BoxDecoration(
-          color:  Colors.black.withOpacity(0.35),
-          shape:  BoxShape.circle,
-          border: Border.all(color: Colors.white.withOpacity(0.22), width: 1),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 6)],
+          color: Colors.black.withOpacity(0.3),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
         ),
         child: Icon(icon, color: Colors.white, size: 20),
       ),
     );
   }
 
-  // ── Game area ──────────────────────────────────────────────────────────────
   Widget _buildGameArea(GameProvider game) {
     final tubeCount = game.tubes.length;
-    // 2.5D perspective transform – subtle tilt gives depth without hurting readability.
-    return Center(
-      child: Transform(
-        transform: Matrix4.identity()
-          ..setEntry(3, 2, 0.00055)    // perspective depth
-          ..rotateX(-0.055),           // slight elevation angle
-        alignment: Alignment.center,
+    final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
+
+    if (isPortrait) {
+      return Center(
         child: Wrap(
-          alignment:  WrapAlignment.center,
-          spacing:    10,
-          runSpacing: 14,
+          alignment: WrapAlignment.center,
+          spacing: 12,
+          runSpacing: 16,
           children: List.generate(tubeCount, (index) {
             return TubeWidget(
-              gems:           game.tubes[index],
-              capacity:       game.currentLevel?.tubeCapacity ?? 4,
-              isSelected:     game.selectedTubeIndex  == index,
-              isHintTarget:   game.hintDestinationIndex == index,
-              onTap:          () => game.onTubeTap(index),
-              width:          64,
-              gemSize:        46,
+              gems: game.tubes[index],
+              capacity: game.currentLevel?.tubeCapacity ?? 4,
+              isSelected: game.selectedTubeIndex == index,
+              isHintTarget: game.hintDestinationIndex == index,
+              onTap: () => game.onTubeTap(index),
+              width: 65,
+              gemSize: 48,
             );
           }),
         ),
-      ),
-    );
+      );
+    } else {
+      return Center(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(tubeCount, (index) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: TubeWidget(
+                  gems: game.tubes[index],
+                  capacity: game.currentLevel?.tubeCapacity ?? 4,
+                  isSelected: game.selectedTubeIndex == index,
+                  isHintTarget: game.hintDestinationIndex == index,
+                  onTap: () => game.onTubeTap(index),
+                  width: 70,
+                  gemSize: 52,
+                ),
+              );
+            }),
+          ),
+        ),
+      );
+    }
   }
 
-  // ── Bottom controls ────────────────────────────────────────────────────────
   Widget _buildBottomControls(GameProvider game) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.20),
-        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.08))),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
+          // Hint button shows current count
           _buildControlButton(
             Icons.lightbulb_outline,
             game.hints > 0 ? 'Hint (${game.hints})' : 'Hint',
@@ -339,53 +314,64 @@ class _GameScreenState extends State<GameScreen>
     return GestureDetector(
       onTap: onTap,
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width:  50,
+            width: 50,
             height: 50,
             decoration: BoxDecoration(
-              color:  Colors.black.withOpacity(0.32),
-              shape:  BoxShape.circle,
-              border: Border.all(color: color.withOpacity(0.50), width: 1.5),
-              boxShadow: [BoxShadow(color: color.withOpacity(0.22), blurRadius: 10)],
+              color: Colors.black.withOpacity(0.3),
+              shape: BoxShape.circle,
+              border: Border.all(color: color.withOpacity(0.5), width: 1.5),
+              boxShadow: [BoxShadow(color: color.withOpacity(0.2), blurRadius: 10)],
             ),
             child: Icon(icon, color: color, size: 24),
           ),
           const SizedBox(height: 4),
-          Text(label, style: TextStyle(color: Colors.white.withOpacity(0.72), fontSize: 11)),
+          Text(label,
+              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 11)),
         ],
       ),
     );
   }
 
-  // ── Hint handler ───────────────────────────────────────────────────────────
+  // ─── Hint tap handler ─────────────────────────────────────────────────────
   void _onHintTap(BuildContext context) async {
-    final game   = context.read<GameProvider>();
+    final game = context.read<GameProvider>();
     final result = await game.useHint();
     if (!mounted) return;
+
     switch (result) {
       case HintResult.used:
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('💡 Hint used! ${game.hints} remaining.'),
-          backgroundColor: Colors.amber.withOpacity(0.9),
-          duration: const Duration(seconds: 2),
-        ));
+        // Hint applied — tubes are now highlighted. No dialog needed.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('💡 Hint used! ${game.hints} remaining.'),
+            backgroundColor: Colors.amber.withOpacity(0.9),
+            duration: const Duration(seconds: 2),
+          ),
+        );
         break;
+
       case HintResult.usedCoins:
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-            '💡 Hint used! (${GameConstants.hintCost} coins spent) — ${game.totalCoins} left.'),
-          backgroundColor: Colors.amber.withOpacity(0.9),
-          duration: const Duration(seconds: 2),
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                '💡 Hint used! (${GameConstants.hintCost} coins spent) — ${game.totalCoins} left.'),
+            backgroundColor: Colors.amber.withOpacity(0.9),
+            duration: const Duration(seconds: 2),
+          ),
+        );
         break;
+
       case HintResult.noCoins:
       case HintResult.noHints:
         _showHintMonetizationDialog(context, game);
+        break;
     }
   }
 
+  /// Shown when the player has no hints AND not enough coins.
+  /// Three paths: Watch Ad (free hint) | Buy with coins | Go to Shop.
   void _showHintMonetizationDialog(BuildContext context, GameProvider game) {
     showDialog(
       context: context,
@@ -395,37 +381,48 @@ class _GameScreenState extends State<GameScreen>
           borderRadius: BorderRadius.circular(20),
           side: BorderSide(color: Colors.yellowAccent.withOpacity(0.4), width: 1.5),
         ),
-        title: const Text('Out of Hints!',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center),
+        title: const Text(
+          'Out of Hints!',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.lightbulb, color: Colors.yellowAccent, size: 52),
             const SizedBox(height: 12),
-            const Text('Get a hint to reveal the best move.',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-                textAlign: TextAlign.center),
+            const Text(
+              'Get a hint to reveal the best move.',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 20),
+
+            // ── Option 1: Watch Ad (free) ──────────────────────────────────
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () {
                   Navigator.pop(ctx);
+                  // Reward stream → addHints(1) then auto-applies via callback
                   AdMobService().onRewardEarned.first.then((_) {
                     if (!mounted) return;
                     game.addHints(1);
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('💡 You got 1 hint!'),
-                          backgroundColor: Colors.amber,
-                          duration: Duration(seconds: 2)),
+                      const SnackBar(
+                        content: Text('💡 You got 1 hint!'),
+                        backgroundColor: Colors.amber,
+                        duration: Duration(seconds: 2),
+                      ),
                     );
                   });
                   AdMobService().showRewardedAd(type: 'hint');
                 },
                 icon: const Icon(Icons.play_circle_fill, color: Colors.black),
-                label: const Text('Watch Ad — Free Hint',
-                    style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                label: const Text(
+                  'Watch Ad — Free Hint',
+                  style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.amberAccent,
                   padding: const EdgeInsets.symmetric(vertical: 12),
@@ -434,6 +431,8 @@ class _GameScreenState extends State<GameScreen>
               ),
             ),
             const SizedBox(height: 10),
+
+            // ── Option 2: Spend coins ──────────────────────────────────────
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -443,20 +442,25 @@ class _GameScreenState extends State<GameScreen>
                         if (!mounted) return;
                         Navigator.pop(ctx);
                         if (bought) {
+                          // Immediately use the hint we just bought
                           await game.useHint();
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: Text(
-                                '💡 Hint applied! ${GameConstants.hintCost} coins spent.'),
-                            backgroundColor: Colors.amber.withOpacity(0.9),
-                            duration: const Duration(seconds: 2),
-                          ));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                  '💡 Hint applied! ${GameConstants.hintCost} coins spent.'),
+                              backgroundColor: Colors.amber.withOpacity(0.9),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
                         }
                       }
-                    : null,
+                    : null, // greyed out if not enough coins
                 icon: const Icon(Icons.monetization_on, color: Colors.white),
-                label: Text('Use ${GameConstants.hintCost} Coins  (have ${game.totalCoins})',
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                label: Text(
+                  'Use ${GameConstants.hintCost} Coins  (have ${game.totalCoins})',
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.purple,
                   disabledBackgroundColor: Colors.purple.withOpacity(0.3),
@@ -466,17 +470,23 @@ class _GameScreenState extends State<GameScreen>
               ),
             ),
             const SizedBox(height: 10),
+
+            // ── Option 3: Go to Shop ───────────────────────────────────────
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
                 onPressed: () {
                   Navigator.pop(ctx);
                   Navigator.push(
-                      context, MaterialPageRoute(builder: (_) => const ShopScreen()));
+                    context,
+                    MaterialPageRoute(builder: (_) => const ShopScreen()),
+                  );
                 },
                 icon: const Icon(Icons.storefront, color: Colors.purpleAccent),
-                label: const Text('Buy Hint Pack in Shop',
-                    style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold)),
+                label: const Text(
+                  'Buy Hint Pack in Shop',
+                  style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold),
+                ),
                 style: OutlinedButton.styleFrom(
                   side: BorderSide(color: Colors.purpleAccent.withOpacity(0.5)),
                   padding: const EdgeInsets.symmetric(vertical: 12),
@@ -505,7 +515,11 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _showPauseMenu(BuildContext context) {
-    showDialog(context: context, barrierDismissible: false, builder: (_) => const _PauseDialog());
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _PauseDialog(),
+    );
   }
 
   void _showExtraMovesDialog(BuildContext context) {
@@ -518,16 +532,19 @@ class _GameScreenState extends State<GameScreen>
           borderRadius: BorderRadius.circular(20),
           side: BorderSide(color: Colors.purpleAccent.withOpacity(0.5), width: 1),
         ),
-        title: const Text('Extra Moves',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center),
+        title: const Text(
+          'Extra Moves',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.add_circle, color: Colors.greenAccent, size: 56),
             const SizedBox(height: 16),
             const Text('+5 Moves',
-                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center),
             const SizedBox(height: 12),
             const Text('Watch a short video for free:',
@@ -543,11 +560,13 @@ class _GameScreenState extends State<GameScreen>
                 },
                 icon: const Icon(Icons.play_circle_outline, color: Colors.black),
                 label: const Text('Watch Video',
-                    style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15)),
+                    style: TextStyle(
+                        color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.amberAccent,
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape:
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ),
@@ -556,7 +575,8 @@ class _GameScreenState extends State<GameScreen>
               Expanded(child: Divider(color: Colors.white24)),
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Text('OR', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                child:
+                    Text('OR', style: TextStyle(color: Colors.white38, fontSize: 12)),
               ),
               Expanded(child: Divider(color: Colors.white24)),
             ]),
@@ -580,13 +600,16 @@ class _GameScreenState extends State<GameScreen>
                   }
                 },
                 icon: const Icon(Icons.monetization_on, color: Colors.white),
-                label: Text('Use ${GameConstants.extraMovesCost} Coins',
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                label: Text(
+                  'Use ${GameConstants.extraMovesCost} Coins',
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.purple,
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape:
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ),
@@ -596,8 +619,10 @@ class _GameScreenState extends State<GameScreen>
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
         ],
       ),
     );
@@ -605,6 +630,7 @@ class _GameScreenState extends State<GameScreen>
 
   void _showExtraTubeDialog(BuildContext context) {
     final game = context.read<GameProvider>();
+
     if (!game.canAddExtraTube) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -615,6 +641,7 @@ class _GameScreenState extends State<GameScreen>
       );
       return;
     }
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -623,23 +650,24 @@ class _GameScreenState extends State<GameScreen>
           borderRadius: BorderRadius.circular(20),
           side: BorderSide(color: Colors.cyanAccent.withOpacity(0.5), width: 1),
         ),
-        title: const Text('Extra Tube',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center),
+        title: const Text(
+          'Extra Tube',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.view_column, color: Colors.cyanAccent, size: 56),
             const SizedBox(height: 16),
             const Text('+1 Tube',
-                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center),
             const SizedBox(height: 12),
-            const Text(
-              'Stuck? An extra tube gives you room to work with.\nWatch a short video for free:',
-              style: TextStyle(color: Colors.white70, fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
+            const Text('Stuck? An extra tube gives you room to work with.\nWatch a short video for free:',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+                textAlign: TextAlign.center),
             const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
@@ -650,20 +678,24 @@ class _GameScreenState extends State<GameScreen>
                     if (!mounted) return;
                     game.addFreeExtraTube();
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('🧪 +1 tube added!'),
-                          backgroundColor: Colors.cyanAccent,
-                          duration: Duration(seconds: 2)),
+                      const SnackBar(
+                        content: Text('🧪 +1 tube added!'),
+                        backgroundColor: Colors.cyanAccent,
+                        duration: Duration(seconds: 2),
+                      ),
                     );
                   });
                   AdMobService().showRewardedAd(type: 'extra_tube');
                 },
                 icon: const Icon(Icons.play_circle_outline, color: Colors.black),
                 label: const Text('Watch Video',
-                    style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15)),
+                    style: TextStyle(
+                        color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.amberAccent,
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape:
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ),
@@ -672,7 +704,8 @@ class _GameScreenState extends State<GameScreen>
               Expanded(child: Divider(color: Colors.white24)),
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Text('OR', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                child:
+                    Text('OR', style: TextStyle(color: Colors.white38, fontSize: 12)),
               ),
               Expanded(child: Divider(color: Colors.white24)),
             ]),
@@ -687,20 +720,25 @@ class _GameScreenState extends State<GameScreen>
                     game.buyExtraTube();
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Not enough coins! Watch a video instead.'),
-                          backgroundColor: Colors.redAccent,
-                          duration: Duration(seconds: 2)),
+                      const SnackBar(
+                        content: Text('Not enough coins! Watch a video instead.'),
+                        backgroundColor: Colors.redAccent,
+                        duration: Duration(seconds: 2),
+                      ),
                     );
                   }
                 },
                 icon: const Icon(Icons.monetization_on, color: Colors.white),
-                label: Text('Use ${GameConstants.extraTubeCost} Coins',
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                label: Text(
+                  'Use ${GameConstants.extraTubeCost} Coins',
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.purple,
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape:
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ),
@@ -710,8 +748,10 @@ class _GameScreenState extends State<GameScreen>
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
         ],
       ),
     );
@@ -730,7 +770,7 @@ class _GameScreenState extends State<GameScreen>
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center),
         content: Text('Your current progress will be lost.',
-            style: TextStyle(color: Colors.white.withOpacity(0.70)),
+            style: TextStyle(color: Colors.white.withOpacity(0.7)),
             textAlign: TextAlign.center),
         actions: [
           TextButton(
@@ -754,10 +794,7 @@ class _GameScreenState extends State<GameScreen>
   }
 }
 
-// ── Pause dialog ─────────────────────────────────────────────────────────────
-
 class _PauseDialog extends StatelessWidget {
-  const _PauseDialog();
   @override
   Widget build(BuildContext context) {
     final game = context.read<GameProvider>();
@@ -766,10 +803,12 @@ class _PauseDialog extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
-          color: const Color(0xFF1a1a2e).withOpacity(0.96),
+          color: const Color(0xFF1a1a2e).withOpacity(0.95),
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: Colors.purpleAccent.withOpacity(0.50), width: 2),
-          boxShadow: [BoxShadow(color: Colors.purpleAccent.withOpacity(0.20), blurRadius: 30)],
+          border: Border.all(color: Colors.purpleAccent.withOpacity(0.5), width: 2),
+          boxShadow: [
+            BoxShadow(color: Colors.purpleAccent.withOpacity(0.2), blurRadius: 30)
+          ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -781,22 +820,22 @@ class _PauseDialog extends StatelessWidget {
                     fontWeight: FontWeight.bold,
                     letterSpacing: 4)),
             const SizedBox(height: 30),
-            _pauseBtn('Resume',  Icons.play_arrow,  Colors.greenAccent,  () {
+            _buildPauseButton('Resume', Icons.play_arrow, Colors.greenAccent, () {
               game.resumeGame();
               AudioService().resumeBGM();
               Navigator.pop(context);
             }),
             const SizedBox(height: 12),
-            _pauseBtn('Restart', Icons.refresh,     Colors.orangeAccent, () {
+            _buildPauseButton('Restart', Icons.refresh, Colors.orangeAccent, () {
               game.restartLevel();
               Navigator.pop(context);
             }),
             const SizedBox(height: 12),
-            _pauseBtn('Quit',    Icons.exit_to_app, Colors.redAccent,    () {
+            _buildPauseButton('Quit', Icons.exit_to_app, Colors.redAccent, () {
               AudioService().playBGM();
               Navigator.of(context).pushAndRemoveUntil(
                 MaterialPageRoute(builder: (_) => const HomeScreen()),
-                (r) => false,
+                (route) => false,
               );
             }),
           ],
@@ -805,16 +844,17 @@ class _PauseDialog extends StatelessWidget {
     );
   }
 
-  Widget _pauseBtn(String text, IconData icon, Color color, VoidCallback onTap) {
+  Widget _buildPauseButton(
+      String text, IconData icon, Color color, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width:  200,
+        width: 200,
         height: 50,
         decoration: BoxDecoration(
-          color:  color.withOpacity(0.18),
+          color: color.withOpacity(0.2),
           borderRadius: BorderRadius.circular(25),
-          border: Border.all(color: color.withOpacity(0.50), width: 1),
+          border: Border.all(color: color.withOpacity(0.5), width: 1),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -822,7 +862,8 @@ class _PauseDialog extends StatelessWidget {
             Icon(icon, color: color, size: 22),
             const SizedBox(width: 10),
             Text(text,
-                style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    color: color, fontSize: 16, fontWeight: FontWeight.bold)),
           ],
         ),
       ),
