@@ -11,7 +11,6 @@ class ReactionChoreography extends StatefulWidget {
   final GemColor? color;
   final int combo;
   final bool celebrate;
-  final GameReaction stateReaction;
   final Offset? start;
   final Offset? end;
 
@@ -137,7 +136,6 @@ class _ReactionPainter extends CustomPainter {
   final bool celebrate;
   final GameReaction stateReaction;
   final Offset? start;
-  final Offset? end;
 
   _ReactionPainter({
     required this.progress,
