@@ -164,7 +164,6 @@ class _GuardianPainter extends CustomPainter {
     // Reaction-specific whole-body choreography: anticipation, recoil, inspection and celebration.
     final rp = reactionProgress;
     final hit = math.sin(rp * math.pi);
-    final recoil = math.sin((rp * math.pi).clamp(0.0, math.pi));
     final inspecting = reaction == GameReaction.selected || reaction == GameReaction.moved;
     final invalid = reaction == GameReaction.invalid;
     final low = reaction == GameReaction.lowMoves;

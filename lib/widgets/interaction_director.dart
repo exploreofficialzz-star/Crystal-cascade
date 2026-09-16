@@ -40,14 +40,12 @@ class _InteractionDirectorState extends State<InteractionDirector>
   );
   Offset? _eventStart;
   Offset? _eventEnd;
-  int _eventMoveVersion = -1;
 
   @override
   void initState() {
     super.initState();
     _eventStart = widget.flightStart;
     _eventEnd = widget.flightEnd;
-    _eventMoveVersion = widget.moveVersion;
     _controller.forward();
   }
 
@@ -59,7 +57,6 @@ class _InteractionDirectorState extends State<InteractionDirector>
     // the choreography and cut off the flight/landing phases.
     if (widget.moveVersion != oldWidget.moveVersion ||
         (widget.moveVersion == 0 && widget.version != oldWidget.version)) {
-      _eventMoveVersion = widget.moveVersion;
       _eventStart = widget.flightStart ?? _eventStart;
       _eventEnd = widget.flightEnd ?? _eventEnd;
       _controller.forward(from: 0);
@@ -136,8 +133,8 @@ class _InteractionDirectorState extends State<InteractionDirector>
                 CustomPaint(painter: _TrajectoryPainter(
                   progress: t,
                   accent: _accent,
-                  start: eventStart!,
-                  end: eventEnd!,
+                  start: eventStart,
+                  end: eventEnd,
                 )),
               if (landing > 0)
                 CustomPaint(painter: _LandingPainter(
