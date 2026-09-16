@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
+import '../models/gem.dart';
 import '../services/admob_service.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
@@ -9,6 +10,11 @@ import '../utils/constants.dart';
 import '../widgets/ad_banner_widget.dart';
 import '../widgets/tube_widget.dart';
 import '../widgets/tutorial_overlay.dart';
+import '../widgets/living_scene.dart';
+import '../widgets/crystal_guardian.dart';
+import '../widgets/gem_flight.dart';
+import '../widgets/reaction_choreography.dart';
+import '../widgets/interaction_director.dart';
 import 'game_over_screen.dart';
 import 'home_screen.dart';
 import 'shop_screen.dart';
@@ -25,6 +31,13 @@ class _GameScreenState extends State<GameScreen>
   late AnimationController _pulseController;
   StreamSubscription<String>? _rewardSubscription;
   bool _showTutorial = false;
+  bool _endTransitionScheduled = false;
+  final List<GlobalKey> _tubeKeys = [];
+  final GlobalKey _sceneKey = GlobalKey();
+  bool _gameListenerAttached = false;
+  GameProvider? _listenedGame;
+  int _handledMoveVersion = 0;
+  _GemFlightData? _flight;
 
   @override
   void initState() {
@@ -51,7 +64,54 @@ class _GameScreenState extends State<GameScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_gameListenerAttached) {
+      _listenedGame = context.read<GameProvider>();
+      _listenedGame!.addListener(_handleGameChanged);
+      _gameListenerAttached = true;
+    }
+  }
+
+  void _handleGameChanged() {
+    if (!mounted) return;
+    final game = context.read<GameProvider>();
+    if (game.moveVersion == _handledMoveVersion || game.lastMovedGem == null) return;
+    _handledMoveVersion = game.moveVersion;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startGemFlight(game));
+  }
+
+  void _startGemFlight(GameProvider game) {
+    if (!mounted || game.lastMovedGem == null) return;
+    final fromKey = game.lastMoveFrom >= 0 && game.lastMoveFrom < _tubeKeys.length
+        ? _tubeKeys[game.lastMoveFrom]
+        : null;
+    final toKey = game.lastMoveTo >= 0 && game.lastMoveTo < _tubeKeys.length
+        ? _tubeKeys[game.lastMoveTo]
+        : null;
+    final stackBox = _sceneKey.currentContext?.findRenderObject();
+    final fromBox = fromKey?.currentContext?.findRenderObject();
+    final toBox = toKey?.currentContext?.findRenderObject();
+    if (stackBox is! RenderBox || fromBox is! RenderBox || toBox is! RenderBox) return;
+    final startGlobal = fromBox.localToGlobal(fromBox.size.center(Offset.zero));
+    final endGlobal = toBox.localToGlobal(toBox.size.center(Offset.zero));
+    final start = stackBox.globalToLocal(startGlobal);
+    final end = stackBox.globalToLocal(endGlobal);
+    setState(() {
+      _flight = _GemFlightData(
+        key: UniqueKey(),
+        color: game.lastMovedGem!.color,
+        start: start,
+        end: end,
+      );
+    });
+  }
+
+  @override
   void dispose() {
+    if (_gameListenerAttached) {
+      _listenedGame?.removeListener(_handleGameChanged);
+    }
     WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     _rewardSubscription?.cancel();
@@ -85,20 +145,22 @@ class _GameScreenState extends State<GameScreen>
       child: Scaffold(
         body: Consumer<GameProvider>(
           builder: (context, game, child) {
-            if (game.status == GameStatus.won || game.status == GameStatus.lost) {
-              // Dismiss tutorial immediately if the level ends mid-tutorial
-              // so it never blocks the game-over navigation.
+            if ((game.status == GameStatus.won || game.status == GameStatus.lost) &&
+                !_endTransitionScheduled) {
+              _endTransitionScheduled = true;
+              // Let the coordinated victory/game-over reaction breathe before
+              // navigating away, so the player actually sees the celebration.
               if (_showTutorial) {
                 StorageService().markTutorialCompleted();
                 _showTutorial = false;
               }
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) {
-                  AdMobService().showInterstitialAd();
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(builder: (_) => const GameOverScreen()),
-                  );
-                }
+              WidgetsBinding.instance.addPostFrameCallback((_) async {
+                await Future<void>.delayed(const Duration(milliseconds: 1250));
+                if (!mounted) return;
+                AdMobService().showInterstitialAd();
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const GameOverScreen()),
+                );
               });
             }
 
@@ -222,51 +284,155 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _buildGameArea(GameProvider game) {
     final tubeCount = game.tubes.length;
+    while (_tubeKeys.length < tubeCount) {
+      _tubeKeys.add(GlobalKey());
+    }
+    if (_tubeKeys.length > tubeCount) {
+      _tubeKeys.removeRange(tubeCount, _tubeKeys.length);
+    }
     final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
 
-    if (isPortrait) {
-      return Center(
-        child: Wrap(
-          alignment: WrapAlignment.center,
-          spacing: 12,
-          runSpacing: 16,
-          children: List.generate(tubeCount, (index) {
-            return TubeWidget(
-              gems: game.tubes[index],
-              capacity: game.currentLevel?.tubeCapacity ?? 4,
-              isSelected: game.selectedTubeIndex == index,
-              isHintTarget: game.hintDestinationIndex == index,
-              onTap: () => game.onTubeTap(index),
-              width: 65,
-              gemSize: 48,
-            );
-          }),
-        ),
-      );
-    } else {
-      return Center(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+    GuardianMood mood = GuardianMood.idle;
+    switch (game.reaction) {
+      case GameReaction.invalid:
+        mood = game.comboCount > 0 ? GuardianMood.angry : GuardianMood.confused; break;
+      case GameReaction.won:
+      case GameReaction.matched:
+        mood = GuardianMood.excited; break;
+      case GameReaction.lost:
+        mood = GuardianMood.sad; break;
+      case GameReaction.lowMoves:
+        mood = GuardianMood.worried; break;
+      case GameReaction.selected:
+      case GameReaction.moved:
+        mood = GuardianMood.happy; break;
+      default:
+        if (game.movesRemaining <= 3) mood = GuardianMood.worried;
+        else if (game.comboCount >= 2) mood = GuardianMood.excited;
+        else if (game.selectedTubeIndex >= 0) mood = GuardianMood.happy;
+    }
+
+    final board = isPortrait
+        ? Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 13,
+            runSpacing: 18,
             children: List.generate(tubeCount, (index) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: TubeWidget(
-                  gems: game.tubes[index],
-                  capacity: game.currentLevel?.tubeCapacity ?? 4,
-                  isSelected: game.selectedTubeIndex == index,
-                  isHintTarget: game.hintDestinationIndex == index,
-                  onTap: () => game.onTubeTap(index),
-                  width: 70,
-                  gemSize: 52,
-                ),
+              return TubeWidget(
+                key: _tubeKeys[index],
+                gems: game.tubes[index],
+                capacity: game.currentLevel?.tubeCapacity ?? 4,
+                isSelected: game.selectedTubeIndex == index,
+                isHintTarget: game.hintDestinationIndex == index,
+                isReceiving: _flight != null && game.lastMoveTo == index,
+                reactionVersion: game.reactionVersion,
+                reaction: game.reaction,
+                onTap: () => game.onTubeTap(index),
+                width: 65,
+                gemSize: 48,
               );
             }),
+          )
+        : SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(tubeCount, (index) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: TubeWidget(
+                    key: _tubeKeys[index],
+                    gems: game.tubes[index],
+                    capacity: game.currentLevel?.tubeCapacity ?? 4,
+                    isSelected: game.selectedTubeIndex == index,
+                    isHintTarget: game.hintDestinationIndex == index,
+                    isReceiving: _flight != null && game.lastMoveTo == index,
+                    reactionVersion: game.reactionVersion,
+                    reaction: game.reaction,
+                    onTap: () => game.onTubeTap(index),
+                    width: 70,
+                    gemSize: 52,
+                  ),
+                );
+              }),
+            ),
+          );
+
+    final focusIndex = game.selectedTubeIndex >= 0
+        ? game.selectedTubeIndex
+        : (game.reaction == GameReaction.moved ? game.lastMoveTo : -1);
+    final lookX = focusIndex >= 0 && tubeCount > 1
+        ? ((focusIndex / (tubeCount - 1)) * 2) - 1
+        : 0.0;
+
+    return LivingScene(
+      intensity: game.comboCount >= 2 ? .75 : .42,
+      reactionVersion: game.reactionVersion,
+      reaction: game.reaction,
+      celebrate: game.status == GameStatus.won,
+      focusStart: _flight?.start,
+      focusEnd: _flight?.end,
+      child: Stack(
+        key: _sceneKey,
+        clipBehavior: Clip.none,
+        children: [
+          Align(
+            alignment: Alignment.center,
+            child: RepaintBoundary(child: board),
           ),
-        ),
-      );
-    }
+          Positioned(
+            right: isPortrait ? 4 : 18,
+            bottom: isPortrait ? 0 : 4,
+            child: IgnorePointer(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 280),
+                child: CrystalGuardian(
+                  key: ValueKey(mood),
+                  mood: mood,
+                  reaction: game.reaction,
+                  reactionVersion: game.reactionVersion,
+                  lookX: lookX,
+                  size: isPortrait ? 82 : 94,
+                ),
+              ),
+            ),
+          ),
+          if (_flight != null)
+            GemFlight(
+              key: _flight!.key,
+              color: _flight!.color,
+              start: _flight!.start,
+              end: _flight!.end,
+              onComplete: () {
+                if (mounted) setState(() => _flight = null);
+              },
+            ),
+          Positioned.fill(
+            child: InteractionDirector(
+              reaction: game.reaction,
+              version: game.reactionVersion,
+              moveVersion: game.moveVersion,
+              color: game.lastMovedGem?.color,
+              hasFlight: _flight != null,
+              combo: game.comboCount,
+              flightStart: _flight?.start,
+              flightEnd: _flight?.end,
+            ),
+          ),
+          Positioned.fill(
+            child: ReactionChoreography(
+              reaction: game.reaction,
+              version: game.reactionVersion,
+              color: game.lastMovedGem?.color,
+              combo: game.comboCount,
+              celebrate: game.status == GameStatus.won,
+              start: _flight?.start,
+              end: _flight?.end,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildBottomControls(GameProvider game) {
@@ -869,4 +1035,19 @@ class _PauseDialog extends StatelessWidget {
       ),
     );
   }
+}
+
+
+class _GemFlightData {
+  final Key key;
+  final GemColor color;
+  final Offset start;
+  final Offset end;
+
+  const _GemFlightData({
+    required this.key,
+    required this.color,
+    required this.start,
+    required this.end,
+  });
 }

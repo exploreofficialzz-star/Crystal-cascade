@@ -161,3 +161,17 @@ This project is proprietary. All rights reserved by chAs Tech Group.
 **chAs Tech Group**
 - Developer Tag: `by chAs`
 - Package: `com.chastechgroup.crystalcascade`
+
+## Living 2.5D Visual Upgrade
+
+Version 1.2 introduces the first implementation of the Crystal Cascade living-world direction:
+
+- animated 2.5D glass tubes with depth, highlights, glow and interaction states
+- animated crystals with selection lift, shimmer, rotation and glow
+- elevated/perspective scene treatment for a stronger 3D feel
+- continuously animated crystal-world background with distant crystals, motes, fog-like atmosphere and light beams
+- expressive Crystal Guardian rendered as a lightweight Flutter custom painter
+- Guardian moods driven by gameplay state: idle, happy, excited, confused/worried/sad/angry states are ready for event expansion
+- shared visual language designed to keep puzzle readability while making gameplay feel alive
+
+The implementation intentionally stays in Flutter/2.5D for mobile performance and keeps the existing puzzle/game architecture intact.

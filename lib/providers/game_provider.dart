@@ -9,6 +9,9 @@ import '../services/audio_service.dart';
 import '../utils/constants.dart';
 
 enum GameStatus { idle, playing, paused, won, lost }
+enum GameReaction {
+  none, selected, deselected, invalid, moved, matched, tubeCompleted, lowMoves, won, lost
+}
 
 /// Result returned by useHint() so the UI can respond appropriately.
 enum HintResult {
@@ -31,6 +34,12 @@ class GameProvider extends ChangeNotifier {
   int _score = 0;
   int _stars = 0;
   int _comboCount = 0;
+  GameReaction _reaction = GameReaction.none;
+  int _reactionVersion = 0;
+  int _moveVersion = 0;
+  Gem? _lastMovedGem;
+  int _lastMoveFrom = -1;
+  int _lastMoveTo = -1;
 
   // ── Endless level system ──────────────────────────────────────────────────
   // Levels are generated on demand (GameConstants.generateLevel) and cached
@@ -49,6 +58,17 @@ class GameProvider extends ChangeNotifier {
   int get score => _score;
   int get stars => _stars;
   int get comboCount => _comboCount;
+  GameReaction get reaction => _reaction;
+  int get reactionVersion => _reactionVersion;
+  int get moveVersion => _moveVersion;
+  Gem? get lastMovedGem => _lastMovedGem;
+  int get lastMoveFrom => _lastMoveFrom;
+  int get lastMoveTo => _lastMoveTo;
+
+  void _emitReaction(GameReaction reaction) {
+    _reaction = reaction;
+    _reactionVersion++;
+  }
   int get highestUnlockedId => _highestUnlockedId;
 
   int get totalCoins => _storage.getCoins();
@@ -80,6 +100,8 @@ class GameProvider extends ChangeNotifier {
     _score = 0;
     _stars = 0;
     _comboCount = 0;
+    _reaction = GameReaction.none;
+    _reactionVersion++;
     _hintClearTimer?.cancel();
     _generateTubes(level);
     notifyListeners();
@@ -116,11 +138,13 @@ class GameProvider extends ChangeNotifier {
     if (_selectedTubeIndex == -1) {
       if (_tubes[tubeIndex].isNotEmpty) {
         _selectedTubeIndex = tubeIndex;
+        _emitReaction(GameReaction.selected);
         _audio.playTap();
         notifyListeners();
       }
     } else if (_selectedTubeIndex == tubeIndex) {
       _selectedTubeIndex = -1;
+      _emitReaction(GameReaction.deselected);
       notifyListeners();
     } else {
       _moveGem(_selectedTubeIndex, tubeIndex);
@@ -128,25 +152,47 @@ class GameProvider extends ChangeNotifier {
   }
 
   void _moveGem(int fromIndex, int toIndex) {
-    if (_tubes[fromIndex].isEmpty) return;
-    if (_tubes[toIndex].length >= (_currentLevel?.tubeCapacity ?? 4)) return;
-
-    final gem = _tubes[fromIndex].last;
-    if (_tubes[toIndex].isNotEmpty && _tubes[toIndex].last.color != gem.color) {
-      _selectedTubeIndex = -1;
+    if (_tubes[fromIndex].isEmpty) {
+      _emitReaction(GameReaction.invalid);
       notifyListeners();
       return;
     }
+    if (_tubes[toIndex].length >= (_currentLevel?.tubeCapacity ?? 4)) {
+      _emitReaction(GameReaction.invalid);
+      notifyListeners();
+      return;
+    }
+
+    final gem = _tubes[fromIndex].last;
+    // Validate the destination before publishing a move. This prevents the
+    // presentation layer from animating a flight for an invalid color move.
+    if (_tubes[toIndex].isNotEmpty && _tubes[toIndex].last.color != gem.color) {
+      _selectedTubeIndex = -1;
+      _lastMovedGem = null;
+      _lastMoveFrom = -1;
+      _lastMoveTo = -1;
+      _emitReaction(GameReaction.invalid);
+      notifyListeners();
+      return;
+    }
+    _lastMovedGem = gem;
+    _lastMoveFrom = fromIndex;
+    _lastMoveTo = toIndex;
+    _moveVersion++;
 
     _tubes[fromIndex].removeLast();
     _tubes[toIndex].add(gem);
     _movesRemaining--;
     _selectedTubeIndex = -1;
     _score += 10;
+    _emitReaction(GameReaction.moved);
 
     _audio.playTap();
     _checkMatches(toIndex);
     _checkWinCondition();
+    if (_status == GameStatus.playing && _movesRemaining <= 3) {
+      _emitReaction(GameReaction.lowMoves);
+    }
     notifyListeners();
   }
 
@@ -172,6 +218,7 @@ class GameProvider extends ChangeNotifier {
         tube.removeLast();
       }
       _audio.playMatch();
+      _emitReaction(GameReaction.matched);
       _storage.addCoins(GameConstants.coinsPerStar);
     }
   }
@@ -186,12 +233,14 @@ class GameProvider extends ChangeNotifier {
       _stars = _currentLevel?.calculateStars(_movesRemaining) ?? 1;
       _score += _movesRemaining * 20;
       _audio.playVictory();
+      _emitReaction(GameReaction.won);
       _saveProgress();
       return;
     }
     if (_movesRemaining <= 0) {
       _status = GameStatus.lost;
       _audio.playGameOver();
+      _emitReaction(GameReaction.lost);
       notifyListeners();
     }
   }
