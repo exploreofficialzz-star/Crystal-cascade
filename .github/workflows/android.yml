@@ -81,15 +81,15 @@ jobs:
           test -n "$AD_DIR"
           cp -R "$AD_DIR" addons/AdmobPlugin
           cat > addons/AdmobPlugin/android_export.cfg <<'CFG'
-[General]
-is_real = true
+          [General]
+          is_real = true
 
-[Debug]
-app_id = "ca-app-pub-3940256099942544~3347511713"
+          [Debug]
+          app_id = "ca-app-pub-3940256099942544~3347511713"
 
-[Release]
-app_id = "ca-app-pub-2492078126313994~1061290053"
-CFG
+          [Release]
+          app_id = "ca-app-pub-2492078126313994~1061290053"
+          CFG
 
       - name: Install Google Play Billing plugin
         env:
