@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GODOT_VERSION: "4.6.0"
+  GODOT_VERSION: "4.6-stable"
   GODOT_TEMPLATES_VERSION: "4.6.stable"
   ADMOB_VERSION: "v6.0"
   BILLING_VERSION: "3.3.0"
