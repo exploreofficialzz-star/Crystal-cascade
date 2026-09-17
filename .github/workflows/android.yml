@@ -60,13 +60,20 @@ jobs:
           mkdir -p /tmp/export_templates
           unzip -q /tmp/export_templates.tpz -d /tmp/export_templates
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATES_VERSION}"
+          rm -rf "$TEMPLATE_DIR"
           mkdir -p "$TEMPLATE_DIR"
-          find /tmp/export_templates -type f -name 'android_source.zip' -exec cp {} "$TEMPLATE_DIR/" \;
-          find /tmp/export_templates -type f -name 'android_release.apk' -exec cp {} "$TEMPLATE_DIR/" \;
-          find /tmp/export_templates -type f -name 'android_debug.apk' -exec cp {} "$TEMPLATE_DIR/" \;
-          find /tmp/export_templates -type f -name 'version.txt' -exec cp {} "$TEMPLATE_DIR/" \;
+          unzip -q -j /tmp/export_templates.tpz \
+            'templates/android_source.zip' \
+            'templates/android_release.apk' \
+            'templates/android_debug.apk' \
+            'templates/version.txt' \
+            -d "$TEMPLATE_DIR"
           test -f "$TEMPLATE_DIR/android_source.zip"
+          test -f "$TEMPLATE_DIR/android_release.apk"
+          test -f "$TEMPLATE_DIR/android_debug.apk"
           test -f "$TEMPLATE_DIR/version.txt"
+          test "$(cat "$TEMPLATE_DIR/version.txt")" = "$GODOT_TEMPLATES_VERSION"
+          ls -lh "$TEMPLATE_DIR"
 
       - name: Install AdMob plugin
         env:
