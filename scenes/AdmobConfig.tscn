@@ -1,0 +1,4 @@
+; Discovered by the AdMob export plugin. Not loaded directly by Main until the plugin exists.
+[gd_scene format=3]
+
+[node name="Admob" type="Admob"]
