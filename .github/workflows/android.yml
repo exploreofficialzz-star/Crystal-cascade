@@ -64,7 +64,9 @@ jobs:
           find /tmp/export_templates -type f -name 'android_source.zip' -exec cp {} "$TEMPLATE_DIR/" \;
           find /tmp/export_templates -type f -name 'android_release.apk' -exec cp {} "$TEMPLATE_DIR/" \;
           find /tmp/export_templates -type f -name 'android_debug.apk' -exec cp {} "$TEMPLATE_DIR/" \;
+          find /tmp/export_templates -type f -name 'version.txt' -exec cp {} "$TEMPLATE_DIR/" \;
           test -f "$TEMPLATE_DIR/android_source.zip"
+          test -f "$TEMPLATE_DIR/version.txt"
 
       - name: Install AdMob plugin
         env:
