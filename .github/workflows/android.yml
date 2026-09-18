@@ -132,11 +132,6 @@ jobs:
           rm -rf addons/GodotGooglePlayBilling
           cp -R "$BILLING_DIR" addons/GodotGooglePlayBilling
 
-      - name: Install project Android build template
-        run: |
-          godot --headless --path . --install-android-build-template
-          test -f android/build.gradle
-
       - name: Import and validate Godot project
         run: |
           godot --headless --editor --path . --quit-after 10
@@ -160,7 +155,7 @@ jobs:
           GODOT_ANDROID_KEYSTORE_RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           mkdir -p build
-          godot --headless --path . --export-release "Android APK" build/CrystalCascade.apk
+          godot --headless --path . --install-android-build-template --export-release "Android APK" build/CrystalCascade.apk
           godot --headless --path . --export-release "Android AAB" build/CrystalCascade.aab
           test -s build/CrystalCascade.apk
           test -s build/CrystalCascade.aab
