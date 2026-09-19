@@ -437,10 +437,16 @@ func _make_board() -> void:
 	_trail("_make_board complete")
 
 func _connect_tubes() -> void:
-	for i in range(world.tubes_root.get_child_count()):
+	var count := world.tubes_root.get_child_count()
+	_trail("_connect_tubes: begin, child_count=%d" % count)
+	for i in range(count):
+		_trail("_connect_tubes: tube %d — calling world.get_tube" % i)
 		var tube := world.get_tube(i)
+		_trail("_connect_tubes: tube %d — get_tube returned (null=%s)" % [i, str(tube == null)])
 		if tube and not tube.tapped.is_connected(_on_tube_tapped):
 			tube.tapped.connect(_on_tube_tapped)
+			_trail("_connect_tubes: tube %d — connected" % i)
+	_trail("_connect_tubes: loop finished, about to return")
 
 func _sync_visuals() -> void:
 	_trail("_sync_visuals begin, tubes.size()=%d" % tubes.size())
