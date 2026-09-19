@@ -15,23 +15,21 @@ func setup(index: int, cap: int) -> void:
 	capacity   = cap
 	var h := max(4.9, float(capacity) * 0.90)
 
-	# Glass cylinder
 	glass = MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
-	cyl.top_radius    = 0.68
-	cyl.bottom_radius = 0.78
-	cyl.height        = h
+	cyl.top_radius      = 0.68
+	cyl.bottom_radius   = 0.78
+	cyl.height          = h
 	cyl.radial_segments = 40
 	var gm := StandardMaterial3D.new()
-	gm.transparency   = BaseMaterial3D.TRANSPARENCY_ALPHA
-	gm.albedo_color   = Color(0.45, 0.72, 1.0, 0.16)
-	gm.metallic       = 0.15
-	gm.roughness      = 0.04
+	gm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	gm.albedo_color  = Color(0.45, 0.72, 1.0, 0.16)
+	gm.metallic      = 0.15
+	gm.roughness     = 0.04
 	glass.material_override = gm
 	glass.mesh = cyl
 	add_child(glass)
 
-	# Rim ring
 	rim = MeshInstance3D.new()
 	var torus := TorusMesh.new()
 	torus.inner_radius  = 0.60
@@ -43,7 +41,6 @@ func setup(index: int, cap: int) -> void:
 	rim.material_override = gm
 	add_child(rim)
 
-	# Base disc
 	base = MeshInstance3D.new()
 	var bm := CylinderMesh.new()
 	bm.top_radius    = 0.92
@@ -58,16 +55,14 @@ func setup(index: int, cap: int) -> void:
 	base.material_override = bmat
 	add_child(base)
 
-	# Glow light (off by default, enabled on highlight)
 	light = OmniLight3D.new()
 	light.light_color  = Color(0.3, 0.65, 1.0)
 	light.light_energy = 0.0
 	light.omni_range   = 3.0
 	add_child(light)
 
-	# Input area — handles taps on EMPTY tubes (no crystal on top).
-	# Crystal3D areas handle taps when crystals are present.
-	# main.gd debounces both so _on_tube_tapped fires only once per gesture.
+	# Area handles input on empty tubes. Crystal areas handle taps when
+	# crystals are present. main.gd debounces both so only one call fires.
 	var area := Area3D.new()
 	area.input_ray_pickable = true
 	area.collision_layer    = 1

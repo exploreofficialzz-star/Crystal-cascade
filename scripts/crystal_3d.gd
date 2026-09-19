@@ -3,11 +3,11 @@ extends Node3D
 
 signal tapped(crystal: Crystal3D)
 
-var color_id  := "red"
-var selected  := false
+var color_id   := "red"
+var selected   := false
 var slot_index := 0
-var phase     := 0.0
-var pulse     := 0.0
+var phase      := 0.0
+var pulse      := 0.0
 var mesh:  MeshInstance3D
 var glow:  OmniLight3D
 
@@ -21,7 +21,7 @@ func setup(color_name: String, local_pos: Vector3, seed_phase: float, index: int
 	var prism := PrismMesh.new()
 	prism.size = Vector3(0.82, 0.96, 0.82)
 	prism.left_to_right = 0.62
-	prism.material = _material(color_name)
+	prism.material = _make_material(color_name)
 	mesh.mesh = prism
 	mesh.rotation_degrees = Vector3(0, 30, 0)
 	add_child(mesh)
@@ -44,13 +44,13 @@ func setup(color_name: String, local_pos: Vector3, seed_phase: float, index: int
 	add_child(area)
 	area.input_event.connect(_on_area_input)
 
-func _material(color_name: String) -> StandardMaterial3D:
+func _make_material(color_name: String) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
-	m.albedo_color      = GameData.COLOR_HEX[color_name]
-	m.metallic          = 0.35
-	m.roughness         = 0.16
-	m.emission_enabled  = true
-	m.emission          = GameData.COLOR_HEX[color_name] * 0.22
+	m.albedo_color     = GameData.COLOR_HEX[color_name]
+	m.metallic         = 0.35
+	m.roughness        = 0.16
+	m.emission_enabled = true
+	m.emission         = GameData.COLOR_HEX[color_name] * 0.22
 	return m
 
 func _on_area_input(_camera: Node, event: InputEvent,
@@ -63,25 +63,24 @@ func _on_area_input(_camera: Node, event: InputEvent,
 
 func set_selected(value: bool) -> void:
 	selected = value
-	if glow:  glow.light_energy = 2.2 if value else 0.0
-	if mesh:  mesh.scale = Vector3(1.08, 1.08, 1.08) if value else Vector3.ONE
+	if glow: glow.light_energy = 2.2 if value else 0.0
+	if mesh: mesh.scale = Vector3(1.08, 1.08, 1.08) if value else Vector3.ONE
 
-# BUG-003 FIX: Node3D has no `modulate` property (that belongs to CanvasItem/2D).
-# Tweening "modulate:a" on a Node3D crashes at runtime. Replaced with a
-# scale-burst + glow-fade that works correctly on 3D nodes.
+# BUG-003 FIX: Node3D has no `modulate` property — that's CanvasItem (2D) only.
+# Tweening "modulate:a" on a Node3D throws a runtime error. Fixed with a
+# 3D-compatible scale-burst + glow-fade animation.
 func play_match_pop() -> void:
 	if glow: glow.light_energy = 3.5
-	var tween := create_tween().set_parallel(true)
-	tween.tween_property(self, "scale", Vector3(1.4, 1.4, 1.4), 0.08)
-	tween.tween_property(self, "scale", Vector3.ZERO,            0.18).set_delay(0.08)
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(self, "scale", Vector3(1.4, 1.4, 1.4), 0.08)
+	tw.tween_property(self, "scale", Vector3.ZERO, 0.18).set_delay(0.08)
 	if glow:
-		tween.tween_property(glow, "light_energy", 0.0, 0.22)
+		tw.tween_property(glow, "light_energy", 0.0, 0.22)
 
 func _process(delta: float) -> void:
 	pulse += delta
 	if not mesh: return
-	mesh.rotation.y += delta * 0.70
+	mesh.rotation.y  += delta * 0.70
 	mesh.position.y   = sin(pulse * 2.0 + phase) * 0.035
 	if selected:
-		var s := 1.08 + sin(pulse * 9.0) * 0.035
-		mesh.scale = Vector3.ONE * s
+		mesh.scale = Vector3.ONE * (1.08 + sin(pulse * 9.0) * 0.035)
