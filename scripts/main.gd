@@ -5,9 +5,13 @@ const HINT_COST        := 40
 const EXTRA_MOVES_COST := 30
 const EXTRA_TUBE_COST  := 100
 
-# ── UI sizes (1080 × 1920 base viewport) ─────────────────────────────────────
-const MRG  := 44   # outer margin
-const SEP  := 18   # item separation
+# ── UI sizes (1080 × 1920 base viewport) — UNCHANGED from the last build.
+# I have no screenshot of these screens actually rendering on your device yet,
+# so I'm not re-guessing new numbers. Send me a screenshot of Home / Level
+# Select once this build runs and I'll adjust based on what's actually wrong,
+# not another blind guess. ─────────────────────────────────────────────────────
+const MRG  := 44
+const SEP  := 18
 const F_TITLE  := 78
 const F_SUB    := 34
 const F_BTN_H  := 46
@@ -48,17 +52,55 @@ var move_serial      := 0
 var toast_node:      Control
 var tutorial_visible := false
 
-# BUG-002: debounce — Crystal3D and Tube3D both emit input for one tap
 var _last_tap_tube  := -1
 var _last_tap_frame := -1
+
+# ── Phone-only crash diagnostics ──────────────────────────────────────────────
+# No computer, no logcat, no Godot editor needed. Every risky step below is
+# logged to a small file in the app's OWN storage, flushed to disk immediately.
+# If the app dies mid-step, that file is left exactly where it stopped. On the
+# NEXT launch, before anything else, we check for that unfinished trail and —
+# if found — show it directly on screen with a COPY button, instead of going
+# to the home screen. Copy it, paste it here, and I'll know exactly where it
+# died instead of guessing.
+const CRASH_LOG_PATH := "user://crash_trail.txt"
+var _trail_file: FileAccess = null
+
+func _trail(msg: String) -> void:
+	print("[CC-DEBUG] " + msg)
+	if _trail_file:
+		_trail_file.store_line(msg)
+		_trail_file.flush()
+
+func _notification(what: int) -> void:
+	# Best-effort "this session ended on purpose" marker. A real crash never
+	# reaches this, which is exactly what lets us tell the two cases apart.
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
+		_trail("=== SESSION ENDED CLEANLY ===")
+
+func _read_previous_crash_trail() -> String:
+	if not FileAccess.file_exists(CRASH_LOG_PATH):
+		return ""
+	var f := FileAccess.open(CRASH_LOG_PATH, FileAccess.READ)
+	if not f:
+		return ""
+	var content := f.get_as_text()
+	f.close()
+	if content.strip_edges() == "" or content.contains("=== SESSION ENDED CLEANLY ==="):
+		return ""
+	return content
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 func _ready() -> void:
+	var previous_trail := _read_previous_crash_trail()
+	_trail_file = FileAccess.open(CRASH_LOG_PATH, FileAccess.WRITE)
+	_trail("main._ready begin")
 	save  = SaveData.new();     add_child(save)
 	audio = AudioManager.new(); add_child(audio)
 	world = GameWorld.new();    add_child(world)
 	world.build()
+	_trail("world.build() returned")
 	platform = AndroidPlatform.new(); add_child(platform)
 	platform.setup(save)
 	platform.rewarded_earned.connect(_on_rewarded_earned)
@@ -67,6 +109,65 @@ func _ready() -> void:
 	_build_ui()
 	await get_tree().process_frame
 	audio.set_music(bool(save.data.music))
+	if previous_trail != "":
+		_trail("previous run did not close cleanly — showing trail screen")
+		_show_crash_trail_screen(previous_trail)
+	else:
+		_trail("no leftover trail — going to show_home()")
+		show_home()
+	_trail("main._ready complete")
+
+func _show_crash_trail_screen(trail: String) -> void:
+	_clear_ui()
+	var bg := ColorRect.new()
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color(0.03, 0.03, 0.08, 1.0)
+	screen_root.add_child(bg)
+
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left",   MRG)
+	margin.add_theme_constant_override("margin_right",  MRG)
+	margin.add_theme_constant_override("margin_top",    60)
+	margin.add_theme_constant_override("margin_bottom", 40)
+	screen_root.add_child(margin)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", SEP)
+	margin.add_child(box)
+
+	box.add_child(_label("⚠ LAST SESSION DIDN'T CLOSE CLEANLY", 40, Color("#ff9060")))
+	box.add_child(_label("Here's exactly where it stopped. Tap COPY LOG, then paste it to Claude.",
+		26, Color("#c0c8ee")))
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.add_child(scroll)
+
+	var log_panel := PanelContainer.new()
+	log_panel.add_theme_stylebox_override("panel", _style(Color(0.0, 0.0, 0.0, 0.6), 14))
+	scroll.add_child(log_panel)
+
+	var log_label := Label.new()
+	log_label.text = trail
+	log_label.add_theme_font_size_override("font_size", 24)
+	log_label.add_theme_color_override("font_color", Color("#9dffb0"))
+	log_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	log_panel.add_child(log_label)
+
+	box.add_child(_button("📋  COPY LOG", func(): _copy_trail(trail), H_BTN, F_BTN, true))
+	box.add_child(_button("CONTINUE TO GAME", _dismiss_crash_trail, H_BTN, F_BTN))
+
+func _copy_trail(trail: String) -> void:
+	DisplayServer.clipboard_set(trail)
+	_toast("Copied — paste it to Claude")
+
+func _dismiss_crash_trail() -> void:
+	if FileAccess.file_exists(CRASH_LOG_PATH):
+		var f := FileAccess.open(CRASH_LOG_PATH, FileAccess.WRITE)
+		if f:
+			f.store_line("=== SESSION ENDED CLEANLY ===")
+			f.close()
 	show_home()
 
 func _build_ui() -> void:
@@ -152,7 +253,6 @@ func _background(img := "res://assets/images/bg_menu.jpg") -> void:
 	screen_root.add_child(ov)
 
 func _content_scroll() -> VBoxContainer:
-	# Full-height scrollable column, padded on left/right, scroll only vertical
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -274,9 +374,6 @@ func show_levels() -> void:
 				_style(Color(0.06, 0.09, 0.22, 0.82), 16))
 		else:
 			card.text = "%d\n%s" % [id, "★".repeat(nstars) + "☆".repeat(3 - nstars)]
-			# CRASH FIX: .bind(id) captures the VALUE of id at this moment.
-			# Without .bind(), all lambdas share the same loop variable reference
-			# and every button ends up calling start_level(max_display).
 			card.pressed.connect(start_level.bind(id))
 			card.add_theme_stylebox_override("normal",
 				_style(Color(0.10, 0.14, 0.34, 0.94), 16))
@@ -289,18 +386,25 @@ func show_levels() -> void:
 # ── BOARD ─────────────────────────────────────────────────────────────────────
 
 func start_level(id: int) -> void:
+	_trail("===== start_level(%d) begin =====" % id)
 	current_level    = id
 	level_info       = GameData.level_info(id)
+	_trail("level_info = %s" % str(level_info))
 	moves            = int(level_info.moves)
 	score = 0;  combo = 0;  stars = 0
 	selected = -1;  hint_destination = -1
 	game_status = GameData.Status.PLAYING
 	_make_board()
+	_trail("_make_board() returned — calling show_game()")
 	show_game()
+	_trail("show_game() returned")
 	if current_level == 1 and not bool(save.data.tutorial):
+		_trail("first-time tutorial — calling _show_tutorial()")
 		_show_tutorial()
+	_trail("===== start_level(%d) complete =====" % id)
 
 func _make_board() -> void:
+	_trail("_make_board begin")
 	tubes.clear()
 	var all_colors: Array = []
 	for cname in level_info.colors:
@@ -322,9 +426,15 @@ func _make_board() -> void:
 			if idx >= all_colors.size(): break
 			tubes[ti].append(all_colors[idx])
 			idx += 1
+	var sizes := tubes.map(func(t): return t.size())
+	_trail("_make_board: tubes array built, sizes = %s" % str(sizes))
+	_trail("_make_board: calling world.arrange(%d, %d)" % [tubes.size(), int(level_info.capacity)])
 	world.arrange(tubes.size(), int(level_info.capacity))
+	_trail("_make_board: world.arrange returned — calling _connect_tubes()")
 	_connect_tubes()
+	_trail("_make_board: _connect_tubes returned — calling _sync_visuals()")
 	_sync_visuals()
+	_trail("_make_board complete")
 
 func _connect_tubes() -> void:
 	for i in range(world.tubes_root.get_child_count()):
@@ -333,28 +443,42 @@ func _connect_tubes() -> void:
 			tube.tapped.connect(_on_tube_tapped)
 
 func _sync_visuals() -> void:
-	for i in range(tubes.size()):            # BUG-004 FIX: tubes.size() not get_child_count()
+	_trail("_sync_visuals begin, tubes.size()=%d" % tubes.size())
+	for i in range(tubes.size()):
 		var tube_node := world.get_tube(i)
-		if not tube_node: continue
+		if not tube_node:
+			_trail("_sync_visuals: WARNING no tube node at index %d" % i)
+			continue
 		for child in tube_node.get_children():
 			if child is Crystal3D:
-				tube_node.remove_child(child) # BUG-005 FIX: immediate free
+				tube_node.remove_child(child)
 				child.free()
 		var values : Array = tubes[i]
 		var slot_h := 0.82
 		var start_y := -((float(level_info.capacity) - 1.0) * slot_h) / 2.0
+		_trail("_sync_visuals: tube %d building %d crystal(s)" % [i, values.size()])
 		for j in range(values.size()):
+			_trail("_sync_visuals: tube %d crystal %d (color=%s) — creating" % [i, j, str(values[j])])
 			var gem := Crystal3D.new()
 			gem.setup(str(values[j]),
 				Vector3(0, start_y + j * slot_h, 0),
 				float(i * 17 + j), j)
-			gem.tapped.connect(func(_c: Crystal3D, _ti: int = i): _on_tube_tapped(_ti))
+			# Uses the SAME .bind() pattern already proven to work for the
+			# level-select cards above, instead of a default-parameter
+			# lambda — removes any doubt about how the extra arg is bound.
+			gem.tapped.connect(_on_crystal_tapped.bind(i))
 			tube_node.add_child(gem)
+			_trail("_sync_visuals: tube %d crystal %d added to tree" % [i, j])
 		tube_node.set_highlight(i == selected or i == hint_destination)
+	_trail("_sync_visuals complete")
+
+func _on_crystal_tapped(_crystal: Crystal3D, tube_index: int) -> void:
+	_on_tube_tapped(tube_index)
 
 # ── GAME SCREEN ───────────────────────────────────────────────────────────────
 
 func show_game() -> void:
+	_trail("show_game begin")
 	_clear_ui()
 
 	var top_mrg := MarginContainer.new()
@@ -380,6 +504,7 @@ func show_game() -> void:
 	hud.add_theme_constant_override("separation", 8)
 	top_inner.add_child(hud)
 	_update_hud()
+	_trail("show_game: top HUD built")
 
 	var bot_mrg := MarginContainer.new()
 	bot_mrg.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
@@ -410,6 +535,8 @@ func show_game() -> void:
 		var b := _button(pair[0], pair[1], H_CTRL, F_BTN_S)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		ctrl.add_child(b)
+	_trail("show_game: bottom controls built")
+	_trail("show_game complete")
 
 func _update_hud() -> void:
 	if not hud: return
@@ -432,8 +559,6 @@ func _update_hud() -> void:
 
 # ── INPUT ─────────────────────────────────────────────────────────────────────
 
-# BUG-002 FIX: Crystal3D and Tube3D both emit input for one tap.
-# Drop the second call if it arrives in the same engine frame for the same tube.
 func _on_tube_tapped(index: int) -> void:
 	var frame := Engine.get_process_frames()
 	if index == _last_tap_tube and frame == _last_tap_frame:
@@ -564,9 +689,6 @@ func _extra_tube() -> void:
 
 # ── PAUSE ─────────────────────────────────────────────────────────────────────
 
-# Named helpers so multi-statement pause actions are not inlined as lambdas.
-# Inlining multi-statement lambdas as function arguments is a GDScript 4
-# parse error risk and was the source of the blank-screen crash.
 func _pause_resume(overlay: ColorRect) -> void:
 	overlay.queue_free()
 	game_status = GameData.Status.PLAYING
@@ -674,8 +796,6 @@ func _on_purchase_failed(_product_id: String, message: String) -> void:
 
 # ── TUTORIAL ──────────────────────────────────────────────────────────────────
 
-# Named helper — avoids multi-line lambda inside a function call argument,
-# which was the root cause of the GDScript parse error and blank gray screen.
 func _close_tutorial(overlay: ColorRect) -> void:
 	overlay.queue_free()
 	tutorial_visible     = false
@@ -683,6 +803,7 @@ func _close_tutorial(overlay: ColorRect) -> void:
 	save.save()
 
 func _show_tutorial() -> void:
+	_trail("_show_tutorial begin")
 	tutorial_visible = true
 	var ov := ColorRect.new()
 	ov.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -713,6 +834,7 @@ func _show_tutorial() -> void:
 	box.add_child(inst)
 	box.add_child(_button("GOT IT  ▶",
 		func(): _close_tutorial(ov), H_LG, F_BTN, true))
+	_trail("_show_tutorial complete")
 
 # ── SHOP ──────────────────────────────────────────────────────────────────────
 
