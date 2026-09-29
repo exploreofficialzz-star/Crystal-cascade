@@ -5,24 +5,32 @@ const PATH := "user://crystal_cascade_save.json"
 const MAX_LIVES := 5
 const LIFE_REGEN_SECONDS := 30 * 60
 const DAILY_BONUS := 50
+const INT_KEYS := [
+    "coins", "hints", "lives", "last_life_time", "total_stars",
+    "highest_unlocked", "daily_bonus_time", "remove_ads_expiry",
+]
 
-var data: Dictionary = {
-    "coins": 25,
-    "hints": 1,
-    "lives": 5,
-    "last_life_time": 0,
-    "total_stars": 0,
-    "highest_unlocked": 1,
-    "tutorial": false,
-    "sound": true,
-    "music": true,
-    "vibration": true,
-    "daily_bonus_time": 0,
-    "remove_ads_tier": "none",
-    "remove_ads_expiry": 0,
-    "levels": {},
-    "processed_purchase_tokens": []
-}
+var data: Dictionary = _default_data()
+
+# Single source of truth for defaults (reset_all() used to keep its own copy).
+static func _default_data() -> Dictionary:
+    return {
+        "coins": 25,
+        "hints": 1,
+        "lives": 5,
+        "last_life_time": 0,
+        "total_stars": 0,
+        "highest_unlocked": 1,
+        "tutorial": false,
+        "sound": true,
+        "music": true,
+        "vibration": true,
+        "daily_bonus_time": 0,
+        "remove_ads_tier": "none",
+        "remove_ads_expiry": 0,
+        "levels": {},
+        "processed_purchase_tokens": [],
+    }
 
 func _ready() -> void:
     load_data()
@@ -34,16 +42,44 @@ func load_data() -> void:
     var file := FileAccess.open(PATH, FileAccess.READ)
     if file == null:
         return
-    var parsed = JSON.parse_string(file.get_as_text())
-    if parsed is Dictionary:
-        for key in data.keys():
-            if parsed.has(key):
-                data[key] = parsed[key]
+    var text := file.get_as_text()
+    file.close()
+    var parsed = JSON.parse_string(text)
+    if not (parsed is Dictionary):
+        push_warning("SaveData: save file unreadable, using defaults")
+        return
+    for key in _default_data().keys():
+        if parsed.has(key):
+            data[key] = parsed[key]
+    # JSON has no int type, so numbers come back as floats.
+    for key in INT_KEYS:
+        data[key] = int(data[key])
+    if not (data.levels is Dictionary):
+        data.levels = {}
+    if not (data.processed_purchase_tokens is Array):
+        data.processed_purchase_tokens = []
 
+# Atomic save: write a temp file, then rename over the real one. A crash or
+# kill mid-write can no longer leave a half-written save (= lost progress and
+# purchases).
 func save() -> void:
-    var file := FileAccess.open(PATH, FileAccess.WRITE)
-    if file:
-        file.store_string(JSON.stringify(data))
+    var tmp_path := PATH + ".tmp"
+    var file := FileAccess.open(tmp_path, FileAccess.WRITE)
+    if file == null:
+        push_warning("SaveData: cannot write %s (error %d)" % [tmp_path, FileAccess.get_open_error()])
+        return
+    file.store_string(JSON.stringify(data))
+    file.flush()
+    file.close()
+    var err := DirAccess.rename_absolute(tmp_path, PATH)
+    if err != OK:
+        DirAccess.remove_absolute(PATH)
+        err = DirAccess.rename_absolute(tmp_path, PATH)
+        if err != OK:
+            push_warning("SaveData: rename failed (error %d)" % err)
+
+func refresh_lives() -> void:
+    _regen_lives()
 
 func _regen_lives() -> void:
     var lives := int(data.lives)
@@ -52,10 +88,10 @@ func _regen_lives() -> void:
     var last := int(data.last_life_time)
     if last <= 0:
         return
-    var now := Time.get_unix_time_from_system()
+    var now := int(Time.get_unix_time_from_system())
     var recovered := int((now - last) / LIFE_REGEN_SECONDS)
     if recovered > 0:
-        data.lives = min(MAX_LIVES, lives + recovered)
+        data.lives = mini(MAX_LIVES, lives + recovered)
         if int(data.lives) >= MAX_LIVES:
             data.last_life_time = 0
         else:
@@ -68,32 +104,32 @@ func level(id: int) -> Dictionary:
 func set_level(id: int, stars: int, score: int) -> void:
     var old: Dictionary = level(id)
     var old_stars := int(old.get("stars", 0))
-    var best_stars := max(old_stars, stars)
-    data.levels[str(id)] = {"stars": best_stars, "score": max(int(old.get("score", 0)), score)}
-    data.total_stars = int(data.total_stars) + max(0, best_stars - old_stars)
+    var best_stars := maxi(old_stars, stars)
+    data.levels[str(id)] = {"stars": best_stars, "score": maxi(int(old.get("score", 0)), score)}
+    data.total_stars = int(data.total_stars) + maxi(0, best_stars - old_stars)
     if id + 1 > int(data.highest_unlocked):
         data.highest_unlocked = id + 1
     save()
 
 func add_coins(amount: int) -> void:
-    data.coins = max(0, int(data.coins) + amount)
+    data.coins = maxi(0, int(data.coins) + amount)
     save()
 
 func spend_coins(amount: int) -> bool:
     if int(data.coins) < amount:
         return false
-    data.coins -= amount
+    data.coins = int(data.coins) - amount
     save()
     return true
 
 func add_hints(amount: int) -> void:
-    data.hints = max(0, int(data.hints) + amount)
+    data.hints = maxi(0, int(data.hints) + amount)
     save()
 
 func use_hint() -> bool:
     if int(data.hints) <= 0:
         return false
-    data.hints -= 1
+    data.hints = int(data.hints) - 1
     save()
     return true
 
@@ -101,7 +137,7 @@ func use_life() -> bool:
     _regen_lives()
     if int(data.lives) <= 0:
         return false
-    data.lives -= 1
+    data.lives = int(data.lives) - 1
     if int(data.lives) < MAX_LIVES:
         data.last_life_time = int(Time.get_unix_time_from_system())
     save()
@@ -109,7 +145,7 @@ func use_life() -> bool:
 
 func add_life() -> void:
     _regen_lives()
-    data.lives = min(MAX_LIVES, int(data.lives) + 1)
+    data.lives = mini(MAX_LIVES, int(data.lives) + 1)
     if int(data.lives) >= MAX_LIVES:
         data.last_life_time = 0
     save()
@@ -121,7 +157,7 @@ func claim_daily_bonus() -> bool:
     if not can_claim_daily_bonus():
         return false
     data.daily_bonus_time = int(Time.get_unix_time_from_system())
-    data.coins += DAILY_BONUS
+    data.coins = int(data.coins) + DAILY_BONUS
     save()
     return true
 
@@ -155,11 +191,5 @@ func mark_processed_purchase(token: String) -> void:
     save()
 
 func reset_all() -> void:
-    data = {
-        "coins": 25, "hints": 1, "lives": 5, "last_life_time": 0,
-        "total_stars": 0, "highest_unlocked": 1, "tutorial": false,
-        "sound": true, "music": true, "vibration": true,
-        "daily_bonus_time": 0, "remove_ads_tier": "none", "remove_ads_expiry": 0,
-        "levels": {}, "processed_purchase_tokens": []
-    }
+    data = _default_data()
     save()

@@ -6,6 +6,10 @@ const PACKAGE_NAME := "com.chastechgroup.crystalcascade"
 const VERSION_NAME := "2.5.0"
 const VERSION_CODE := 21
 
+# false = the AdMob plugin uses its built-in TEST ad units (safe while testing).
+# Set true only for the release build you ship, never while tapping ads yourself.
+const USE_REAL_ADS := false
+
 const ADMOB_APP_ID := "ca-app-pub-2492078126313994~1061290053"
 const ADMOB_BANNER := "ca-app-pub-2492078126313994/2061480722"
 const ADMOB_INTERSTITIAL := "ca-app-pub-2492078126313994/4548648504"

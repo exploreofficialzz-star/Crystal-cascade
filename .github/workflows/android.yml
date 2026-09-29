@@ -19,6 +19,10 @@ env:
   GODOT_TEMPLATES_VERSION: "4.6.stable"
   ADMOB_VERSION: "v6.0"
   BILLING_VERSION: "3.3.0"
+  # Ads/billing plugin files are always downloaded, but they only get bundled
+  # into the app when they are ENABLED as editor plugins. Leave this "false"
+  # until level 1 is confirmed stable on your phone, then set it to "true".
+  ENABLE_MONETIZATION_PLUGINS: "false"
 
 jobs:
   build:
@@ -132,9 +136,25 @@ jobs:
           rm -rf addons/GodotGooglePlayBilling
           cp -R "$BILLING_DIR" addons/GodotGooglePlayBilling
 
+      - name: Enable monetization plugins
+        if: env.ENABLE_MONETIZATION_PLUGINS == 'true'
+        run: |
+          test -f addons/AdmobPlugin/plugin.cfg
+          test -f addons/GodotGooglePlayBilling/plugin.cfg
+          printf '\n[editor_plugins]\n\nenabled=PackedStringArray("res://addons/AdmobPlugin/plugin.cfg", "res://addons/GodotGooglePlayBilling/plugin.cfg")\n' >> project.godot
+          tail -5 project.godot
+
       - name: Import and validate Godot project
         run: |
           godot --headless --editor --path . --quit-after 10
+
+      - name: GDScript syntax check (non-blocking)
+        continue-on-error: true
+        run: |
+          for f in $(find scripts config -name '*.gd' | sort); do
+            echo "== $f"
+            godot --headless --path . --check-only --script "res://$f"
+          done
 
       - name: Decode release keystore
         if: github.event_name != 'pull_request'

@@ -1,20 +1,36 @@
 class_name AudioManager
 extends Node
 
+const SFX_VOICES := 4
+const MUSIC_PATH := "res://assets/sounds/bg_music.mp3"
+
 var music_player: AudioStreamPlayer
-var sfx_player: AudioStreamPlayer
+var sfx_players: Array[AudioStreamPlayer] = []
 var enabled := true
 var music_enabled := true
+var _streams: Dictionary = {}
+var _next_voice := 0
 
 func _ready() -> void:
     music_player = AudioStreamPlayer.new()
-    sfx_player = AudioStreamPlayer.new()
     add_child(music_player)
-    add_child(sfx_player)
-    var music = load("res://assets/sounds/bg_music.mp3")
+    for _i in range(SFX_VOICES):
+        var voice := AudioStreamPlayer.new()
+        add_child(voice)
+        sfx_players.append(voice)
+    var music := _load_stream(MUSIC_PATH)
     if music:
+        # Imported MP3s do not loop by default, so the music used to play once
+        # and then stop for good.
+        if music is AudioStreamMP3:
+            (music as AudioStreamMP3).loop = true
         music_player.stream = music
         music_player.volume_db = -9.0
+
+func _load_stream(path: String) -> AudioStream:
+    if not ResourceLoader.exists(path):
+        return null
+    return load(path) as AudioStream
 
 func play_music() -> void:
     if music_enabled and music_player.stream and not music_player.playing:
@@ -30,10 +46,19 @@ func set_music(value: bool) -> void:
     else:
         stop_music()
 
-func play(name: String) -> void:
-    if not enabled:
+# A pool of voices lets effects overlap (tap + match in the same frame) instead
+# of the second one cutting the first off.
+func play(sfx_name: String) -> void:
+    if not enabled or sfx_players.is_empty():
         return
-    var stream = load("res://assets/sounds/%s.mp3" % name)
-    if stream:
-        sfx_player.stream = stream
-        sfx_player.play()
+    var path := "res://assets/sounds/%s.mp3" % sfx_name
+    var stream: AudioStream = _streams.get(path)
+    if stream == null:
+        stream = _load_stream(path)
+        if stream == null:
+            return
+        _streams[path] = stream
+    var voice: AudioStreamPlayer = sfx_players[_next_voice]
+    _next_voice = (_next_voice + 1) % sfx_players.size()
+    voice.stream = stream
+    voice.play()

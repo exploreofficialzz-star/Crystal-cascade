@@ -1,15 +1,12 @@
 extends Node3D
 
 # ── Economy ───────────────────────────────────────────────────────────────────
-const HINT_COST        := 40
-const EXTRA_MOVES_COST := 30
-const EXTRA_TUBE_COST  := 100
+const HINT_COST           := 40
+const EXTRA_MOVES_COST    := 30
+const EXTRA_TUBE_COST     := 100
+const LEVEL_COMPLETE_COINS := 5
 
-# ── UI sizes (1080 × 1920 base viewport) — UNCHANGED from the last build.
-# I have no screenshot of these screens actually rendering on your device yet,
-# so I'm not re-guessing new numbers. Send me a screenshot of Home / Level
-# Select once this build runs and I'll adjust based on what's actually wrong,
-# not another blind guess. ─────────────────────────────────────────────────────
+# ── UI sizes (1080 x 1920 base viewport) ──────────────────────────────────────
 const MRG  := 44
 const SEP  := 18
 const F_TITLE  := 78
@@ -29,6 +26,8 @@ const H_SM     := 88
 const H_CTRL   := 100
 const H_CARD   := 160
 
+enum UiScreen { NONE, HOME, LEVELS, GAME, SHOP, SETTINGS, RESULT, CRASH }
+
 # ── State ─────────────────────────────────────────────────────────────────────
 var save:     SaveData
 var audio:    AudioManager
@@ -38,6 +37,7 @@ var screen_root: Control
 var hud:      VBoxContainer
 var platform: AndroidPlatform
 
+var current_screen: UiScreen = UiScreen.NONE
 var game_status      := GameData.Status.IDLE
 var current_level    := 1
 var level_info:      Dictionary = {}
@@ -52,72 +52,114 @@ var move_serial      := 0
 var toast_node:      Control
 var tutorial_visible := false
 
+var _pause_overlay: Control = null
 var _last_tap_tube  := -1
 var _last_tap_frame := -1
+var _last_tap_ms    := -1000
+var _back_armed_until_ms := 0
 
-# ── Phone-only crash diagnostics ──────────────────────────────────────────────
-# No computer, no logcat, no Godot editor needed. Every risky step below is
-# logged to a small file in the app's OWN storage, flushed to disk immediately.
-# If the app dies mid-step, that file is left exactly where it stopped. On the
-# NEXT launch, before anything else, we check for that unfinished trail and —
-# if found — show it directly on screen with a COPY button, instead of going
-# to the home screen. Copy it, paste it here, and I'll know exactly where it
-# died instead of guessing.
+# ── Crash trail ───────────────────────────────────────────────────────────────
+# Every risky step is written to a small file in the app's own storage and
+# flushed immediately. If the app dies, the file shows where. On the next launch
+# it is shown on screen with a COPY button. Set SHOW_CRASH_TRAIL to false for
+# the Play Store build (the trail is still written, the screen is just skipped).
+const SHOW_CRASH_TRAIL := true
 const CRASH_LOG_PATH := "user://crash_trail.txt"
+const MARK_CLEAN := "=== SESSION ENDED CLEANLY ==="
+const MARK_PAUSED := "=== APP PAUSED ==="
+const MARK_RESUMED := "=== APP RESUMED ==="
 var _trail_file: FileAccess = null
+
+func _open_trail() -> void:
+	_trail_file = FileAccess.open(CRASH_LOG_PATH, FileAccess.WRITE)
 
 func _trail(msg: String) -> void:
 	print("[CC-DEBUG] " + msg)
 	if _trail_file:
-		_trail_file.store_line(msg)
+		_trail_file.store_line("%d | %s" % [Time.get_ticks_msec(), msg])
 		_trail_file.flush()
 
-func _notification(what: int) -> void:
-	# Best-effort "this session ended on purpose" marker. A real crash never
-	# reaches this, which is exactly what lets us tell the two cases apart.
-	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
-		_trail("=== SESSION ENDED CLEANLY ===")
-
+# The previous session counts as a crash unless its LAST line is a clean-exit or
+# app-paused marker. (Before, a marker anywhere in the file counted as clean, and
+# after tapping CONTINUE the marker sat at the top of the file forever, so every
+# later crash went undetected.)
 func _read_previous_crash_trail() -> String:
 	if not FileAccess.file_exists(CRASH_LOG_PATH):
 		return ""
 	var f := FileAccess.open(CRASH_LOG_PATH, FileAccess.READ)
-	if not f:
+	if f == null:
 		return ""
 	var content := f.get_as_text()
 	f.close()
-	if content.strip_edges() == "" or content.contains("=== SESSION ENDED CLEANLY ==="):
+	var lines := content.strip_edges().split("\n")
+	if lines.size() == 0 or lines[0] == "":
+		return ""
+	var last := lines[lines.size() - 1]
+	if last.ends_with(MARK_CLEAN) or last.ends_with(MARK_PAUSED):
 		return ""
 	return content
+
+func _log_environment() -> void:
+	_trail("build %s, godot %s" % [ProductionConfig.VERSION_NAME, str(Engine.get_version_info().get("string", "?"))])
+	_trail("os %s, model %s" % [OS.get_name(), OS.get_model_name()])
+	_trail("gpu %s, vendor %s" % [
+		RenderingServer.get_video_adapter_name(),
+		RenderingServer.get_video_adapter_vendor()])
+	_trail("gpu api %s" % str(RenderingServer.call("get_video_adapter_api_version")))
+	_trail("static mem %d MB" % (OS.get_static_memory_usage() / 1048576))
+
+# Logs once the renderer has really drawn a frame. If the trail ends at
+# "complete" WITHOUT a "frame drawn" line, the crash is in rendering / shader
+# compilation, not in game scripts.
+func _trail_after_draw(tag: String) -> void:
+	await RenderingServer.frame_post_draw
+	_trail("frame drawn after %s" % tag)
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_trail(MARK_CLEAN)
+	elif what == NOTIFICATION_APPLICATION_PAUSED:
+		if save:
+			save.save()
+		_trail(MARK_PAUSED)
+	elif what == NOTIFICATION_APPLICATION_RESUMED:
+		_trail(MARK_RESUMED)
+	elif what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		_handle_back()
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 func _ready() -> void:
 	var previous_trail := _read_previous_crash_trail()
-	_trail_file = FileAccess.open(CRASH_LOG_PATH, FileAccess.WRITE)
+	_open_trail()
 	_trail("main._ready begin")
+	_log_environment()
 	save  = SaveData.new();     add_child(save)
 	audio = AudioManager.new(); add_child(audio)
+	audio.enabled = bool(save.data.sound)
 	world = GameWorld.new();    add_child(world)
 	world.build()
+	world.set_board_visible(false)
 	_trail("world.build() returned")
 	platform = AndroidPlatform.new(); add_child(platform)
-	platform.setup(save)
+	platform.diagnostic.connect(_trail)
 	platform.rewarded_earned.connect(_on_rewarded_earned)
 	platform.purchase_completed.connect(_on_purchase_completed)
 	platform.purchase_failed.connect(_on_purchase_failed)
+	platform.setup(save)
 	_build_ui()
 	await get_tree().process_frame
 	audio.set_music(bool(save.data.music))
-	if previous_trail != "":
-		_trail("previous run did not close cleanly — showing trail screen")
+	if previous_trail != "" and SHOW_CRASH_TRAIL:
+		_trail("previous run did not close cleanly, showing trail screen")
 		_show_crash_trail_screen(previous_trail)
 	else:
-		_trail("no leftover trail — going to show_home()")
+		_trail("going to show_home()")
 		show_home()
 	_trail("main._ready complete")
 
 func _show_crash_trail_screen(trail: String) -> void:
+	current_screen = UiScreen.CRASH
 	_clear_ui()
 	var bg := ColorRect.new()
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -136,39 +178,34 @@ func _show_crash_trail_screen(trail: String) -> void:
 	box.add_theme_constant_override("separation", SEP)
 	margin.add_child(box)
 
-	box.add_child(_label("⚠ LAST SESSION DIDN'T CLOSE CLEANLY", 40, Color("#ff9060")))
+	box.add_child(_label("LAST SESSION DIDN'T CLOSE CLEANLY", 40, Color("#ff9060")))
 	box.add_child(_label("Here's exactly where it stopped. Tap COPY LOG, then paste it to Claude.",
 		26, Color("#c0c8ee")))
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	box.add_child(scroll)
 
 	var log_panel := PanelContainer.new()
+	log_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	log_panel.add_theme_stylebox_override("panel", _style(Color(0.0, 0.0, 0.0, 0.6), 14))
 	scroll.add_child(log_panel)
 
 	var log_label := Label.new()
 	log_label.text = trail
+	log_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	log_label.add_theme_font_size_override("font_size", 24)
 	log_label.add_theme_color_override("font_color", Color("#9dffb0"))
 	log_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	log_panel.add_child(log_label)
 
-	box.add_child(_button("📋  COPY LOG", func(): _copy_trail(trail), H_BTN, F_BTN, true))
-	box.add_child(_button("CONTINUE TO GAME", _dismiss_crash_trail, H_BTN, F_BTN))
+	box.add_child(_button("COPY LOG", func(): _copy_trail(trail), H_BTN, F_BTN, true))
+	box.add_child(_button("CONTINUE TO GAME", show_home, H_BTN, F_BTN))
 
 func _copy_trail(trail: String) -> void:
 	DisplayServer.clipboard_set(trail)
-	_toast("Copied — paste it to Claude")
-
-func _dismiss_crash_trail() -> void:
-	if FileAccess.file_exists(CRASH_LOG_PATH):
-		var f := FileAccess.open(CRASH_LOG_PATH, FileAccess.WRITE)
-		if f:
-			f.store_line("=== SESSION ENDED CLEANLY ===")
-			f.close()
-	show_home()
+	_toast("Copied - paste it to Claude")
 
 func _build_ui() -> void:
 	ui = Control.new()
@@ -182,8 +219,40 @@ func _build_ui() -> void:
 
 func _clear_ui() -> void:
 	for child in screen_root.get_children():
+		screen_root.remove_child(child)
 		child.queue_free()
 	toast_node = null
+	hud = null
+	_pause_overlay = null
+	tutorial_visible = false
+
+func _vibrate(ms: int) -> void:
+	if save and bool(save.data.vibration) and OS.get_name() == "Android":
+		Input.vibrate_handheld(ms)
+
+# ── Android back button ───────────────────────────────────────────────────────
+# project.godot sets quit_on_go_back=false, so back no longer kills the app from
+# the middle of a level.
+
+func _handle_back() -> void:
+	match current_screen:
+		UiScreen.GAME:
+			if game_status == GameData.Status.PAUSED and _pause_overlay != null:
+				_pause_resume(_pause_overlay)
+			elif game_status == GameData.Status.PLAYING:
+				show_pause()
+		UiScreen.LEVELS, UiScreen.SHOP, UiScreen.SETTINGS, UiScreen.RESULT:
+			show_home()
+		UiScreen.HOME, UiScreen.CRASH:
+			var now := Time.get_ticks_msec()
+			if now < _back_armed_until_ms:
+				_trail(MARK_CLEAN)
+				get_tree().quit()
+			else:
+				_back_armed_until_ms = now + 2000
+				_toast("Press back again to exit")
+		_:
+			pass
 
 # ── Style helpers ─────────────────────────────────────────────────────────────
 
@@ -270,11 +339,20 @@ func _content_scroll() -> VBoxContainer:
 	mrg.add_child(box)
 	return box
 
+# Enter a non-game screen: hide the 3D board so a stale board is never visible
+# behind menus.
+func _enter_menu_screen(screen: UiScreen) -> void:
+	current_screen = screen
+	_clear_ui()
+	if world:
+		world.set_board_visible(false)
+
 # ── HOME ──────────────────────────────────────────────────────────────────────
 
 func show_home() -> void:
 	game_status = GameData.Status.IDLE
-	_clear_ui()
+	_enter_menu_screen(UiScreen.HOME)
+	save.refresh_lives()
 	_background()
 	var box := _content_scroll()
 	box.add_child(_title_block("CRYSTAL CASCADE", "A living 3D crystal puzzle"))
@@ -309,13 +387,17 @@ func show_home() -> void:
 func _claim_daily_bonus() -> void:
 	if save.claim_daily_bonus():
 		audio.play("coin")
+		var came_from_shop := current_screen == UiScreen.SHOP
+		if came_from_shop:
+			show_shop()
+		else:
+			show_home()
 		_toast("+50 coins claimed!")
-		show_home()
 
 # ── LEVEL SELECT ──────────────────────────────────────────────────────────────
 
 func show_levels() -> void:
-	_clear_ui()
+	_enter_menu_screen(UiScreen.LEVELS)
 	_background("res://assets/images/bg_levelselect.jpg")
 
 	var root := MarginContainer.new()
@@ -349,23 +431,26 @@ func show_levels() -> void:
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	outer.add_child(scroll)
 
 	var grid := GridContainer.new()
 	grid.columns = 4
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.add_theme_constant_override("h_separation", 12)
 	grid.add_theme_constant_override("v_separation", 12)
 	scroll.add_child(grid)
 
 	var highest     := int(save.data.highest_unlocked)
-	var max_display := max(100, highest + 16)
+	var max_display := maxi(100, highest + 16)
 
 	for id in range(1, max_display + 1):
 		var prog   : Dictionary = save.level(id)
 		var locked := id > highest
-		var nstars := int(prog.get("stars", 0))
+		var nstars := clampi(int(prog.get("stars", 0)), 0, 3)
 		var card   := Button.new()
 		card.custom_minimum_size = Vector2(0, H_CARD)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		card.add_theme_font_size_override("font_size", 32)
 		if locked:
 			card.text     = "🔒\n%d" % id
@@ -395,13 +480,13 @@ func start_level(id: int) -> void:
 	selected = -1;  hint_destination = -1
 	game_status = GameData.Status.PLAYING
 	_make_board()
-	_trail("_make_board() returned — calling show_game()")
+	_trail("_make_board() returned, calling show_game()")
 	show_game()
 	_trail("show_game() returned")
 	if current_level == 1 and not bool(save.data.tutorial):
-		_trail("first-time tutorial — calling _show_tutorial()")
 		_show_tutorial()
 	_trail("===== start_level(%d) complete =====" % id)
+	_trail_after_draw("start_level(%d)" % id)
 
 func _make_board() -> void:
 	_trail("_make_board begin")
@@ -426,57 +511,48 @@ func _make_board() -> void:
 			if idx >= all_colors.size(): break
 			tubes[ti].append(all_colors[idx])
 			idx += 1
-	var sizes := tubes.map(func(t): return t.size())
-	_trail("_make_board: tubes array built, sizes = %s" % str(sizes))
-	_trail("_make_board: calling world.arrange(%d, %d)" % [tubes.size(), int(level_info.capacity)])
+	_trail("_make_board: %d tubes, capacity %d, %d crystals" % [
+		tubes.size(), int(level_info.capacity), idx])
 	world.arrange(tubes.size(), int(level_info.capacity))
-	_trail("_make_board: world.arrange returned — calling _connect_tubes()")
 	_connect_tubes()
-	_trail("_make_board: _connect_tubes returned — calling _sync_visuals()")
 	_sync_visuals()
 	_trail("_make_board complete")
 
 func _connect_tubes() -> void:
 	var count := world.tubes_root.get_child_count()
-	_trail("_connect_tubes: begin, child_count=%d" % count)
 	for i in range(count):
-		_trail("_connect_tubes: tube %d — calling world.get_tube" % i)
 		var tube := world.get_tube(i)
-		_trail("_connect_tubes: tube %d — get_tube returned (null=%s)" % [i, str(tube == null)])
 		if tube and not tube.tapped.is_connected(_on_tube_tapped):
 			tube.tapped.connect(_on_tube_tapped)
-			_trail("_connect_tubes: tube %d — connected" % i)
-	_trail("_connect_tubes: loop finished, about to return")
 
+# Rebuilds every crystal from the tubes array. Old crystals are removed from
+# the tree right away but freed with queue_free(): freeing them synchronously
+# destroyed the very crystal whose tap signal was still being delivered, which
+# is a use-after-free. All callers that run from a tap go through
+# _handle_tap(), which is itself deferred.
 func _sync_visuals() -> void:
-	_trail("_sync_visuals begin, tubes.size()=%d" % tubes.size())
 	for i in range(tubes.size()):
 		var tube_node := world.get_tube(i)
-		if not tube_node:
+		if tube_node == null:
 			_trail("_sync_visuals: WARNING no tube node at index %d" % i)
 			continue
 		for child in tube_node.get_children():
 			if child is Crystal3D:
 				tube_node.remove_child(child)
-				child.free()
+				child.queue_free()
 		var values : Array = tubes[i]
 		var slot_h := 0.82
 		var start_y := -((float(level_info.capacity) - 1.0) * slot_h) / 2.0
-		_trail("_sync_visuals: tube %d building %d crystal(s)" % [i, values.size()])
 		for j in range(values.size()):
-			_trail("_sync_visuals: tube %d crystal %d (color=%s) — creating" % [i, j, str(values[j])])
 			var gem := Crystal3D.new()
 			gem.setup(str(values[j]),
 				Vector3(0, start_y + j * slot_h, 0),
 				float(i * 17 + j), j)
-			# Uses the SAME .bind() pattern already proven to work for the
-			# level-select cards above, instead of a default-parameter
-			# lambda — removes any doubt about how the extra arg is bound.
 			gem.tapped.connect(_on_crystal_tapped.bind(i))
 			tube_node.add_child(gem)
-			_trail("_sync_visuals: tube %d crystal %d added to tree" % [i, j])
+			if i == selected and j == values.size() - 1:
+				gem.set_selected(true)
 		tube_node.set_highlight(i == selected or i == hint_destination)
-	_trail("_sync_visuals complete")
 
 func _on_crystal_tapped(_crystal: Crystal3D, tube_index: int) -> void:
 	_on_tube_tapped(tube_index)
@@ -485,7 +561,9 @@ func _on_crystal_tapped(_crystal: Crystal3D, tube_index: int) -> void:
 
 func show_game() -> void:
 	_trail("show_game begin")
+	current_screen = UiScreen.GAME
 	_clear_ui()
+	world.set_board_visible(true)
 
 	var top_mrg := MarginContainer.new()
 	top_mrg.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
@@ -510,7 +588,6 @@ func show_game() -> void:
 	hud.add_theme_constant_override("separation", 8)
 	top_inner.add_child(hud)
 	_update_hud()
-	_trail("show_game: top HUD built")
 
 	var bot_mrg := MarginContainer.new()
 	bot_mrg.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
@@ -541,12 +618,14 @@ func show_game() -> void:
 		var b := _button(pair[0], pair[1], H_CTRL, F_BTN_S)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		ctrl.add_child(b)
-	_trail("show_game: bottom controls built")
 	_trail("show_game complete")
 
 func _update_hud() -> void:
-	if not hud: return
-	for child in hud.get_children(): child.queue_free()
+	if not is_instance_valid(hud):
+		return
+	for child in hud.get_children():
+		hud.remove_child(child)
+		child.queue_free()
 	var row1 := HBoxContainer.new()
 	row1.add_theme_constant_override("separation", 10)
 	hud.add_child(row1)
@@ -565,15 +644,22 @@ func _update_hud() -> void:
 
 # ── INPUT ─────────────────────────────────────────────────────────────────────
 
+# Called from inside the physics-picking signal. Do NOTHING heavy here: just
+# de-duplicate and defer. (One touch produces a touch event AND an emulated
+# mouse event; both reach this function.)
 func _on_tube_tapped(index: int) -> void:
 	var frame := Engine.get_process_frames()
-	if index == _last_tap_tube and frame == _last_tap_frame:
+	var now := Time.get_ticks_msec()
+	if index == _last_tap_tube and (frame == _last_tap_frame or now - _last_tap_ms < 150):
 		return
 	_last_tap_tube  = index
 	_last_tap_frame = frame
+	_last_tap_ms    = now
+	_handle_tap.call_deferred(index)
 
+func _handle_tap(index: int) -> void:
 	if game_status != GameData.Status.PLAYING: return
-	if index < 0 or index >= tubes.size():    return
+	if index < 0 or index >= tubes.size():     return
 	hint_destination = -1
 
 	if selected == -1:
@@ -598,11 +684,8 @@ func _move_gem(from_i: int, to_i: int) -> void:
 	var col: String = tubes[from_i][-1]
 	if not tubes[to_i].is_empty() and tubes[to_i][-1] != col:
 		_invalid_move(); return
-	var sn := world.get_tube(from_i)
-	var dn := world.get_tube(to_i)
-	if sn and dn:
-		world.focus = dn.global_position + Vector3(0, 0.8, 0)
-		world.pulse_camera(0.12)
+	world.focus_on_tube(to_i)
+	world.pulse_camera(0.12)
 	tubes[from_i].pop_back()
 	tubes[to_i].append(col)
 	moves -= 1;  move_serial += 1;  score += 10
@@ -619,6 +702,7 @@ func _invalid_move() -> void:
 	world.guardian.react("angry")
 	world.pulse_camera(0.22)
 	audio.play("tap")
+	_vibrate(40)
 	_toast("That crystal cannot move there")
 
 func _check_match(ti: int) -> void:
@@ -637,6 +721,7 @@ func _check_match(ti: int) -> void:
 	audio.play("match")
 	world.guardian.react("happy")
 	world.pulse_camera(0.18)
+	_vibrate(25)
 	_toast("MATCH! +%d" % (combo * 50))
 
 func _check_win_condition() -> void:
@@ -649,8 +734,10 @@ func _check_win_condition() -> void:
 			else (2 if moves >= int(level_info.s2) else 1)
 		score += moves * 20
 		save.set_level(current_level, stars, score)
+		save.add_coins(LEVEL_COMPLETE_COINS)
 		audio.play("victory")
 		world.guardian.react("happy")
+		_vibrate(60)
 		if platform: platform.show_interstitial()
 		_show_result(true)
 	elif moves <= 0:
@@ -674,17 +761,21 @@ func _hint() -> void:
 				world.focus_on_tube(ti)
 				world.guardian.react("surprised")
 				_sync_visuals()
-				_toast("Hint: tap highlighted source → destination")
+				_update_hud()
+				_toast("Hint: tap the glowing tube to move there")
 				return
-	_toast("No simple move found — expose another crystal")
+	_update_hud()
+	_toast("No simple move found - expose another crystal")
 
 func _extra_moves() -> void:
+	if game_status != GameData.Status.PLAYING: return
 	if save.spend_coins(EXTRA_MOVES_COST):
 		moves += 5;  _update_hud();  _toast("+5 moves")
 	else:
 		_toast("You need %d coins" % EXTRA_MOVES_COST)
 
 func _extra_tube() -> void:
+	if game_status != GameData.Status.PLAYING: return
 	if tubes.size() >= 10: _toast("Maximum 10 tubes"); return
 	if not save.spend_coins(EXTRA_TUBE_COST):
 		_toast("You need %d coins" % EXTRA_TUBE_COST); return
@@ -695,20 +786,25 @@ func _extra_tube() -> void:
 
 # ── PAUSE ─────────────────────────────────────────────────────────────────────
 
-func _pause_resume(overlay: ColorRect) -> void:
-	overlay.queue_free()
+func _pause_resume(overlay: Control) -> void:
+	if is_instance_valid(overlay):
+		overlay.queue_free()
+	_pause_overlay = null
 	game_status = GameData.Status.PLAYING
 
-func _pause_restart(overlay: ColorRect) -> void:
-	overlay.queue_free()
+func _pause_restart(overlay: Control) -> void:
+	if is_instance_valid(overlay):
+		overlay.queue_free()
 	start_level(current_level)
 
-func _pause_to_levels(overlay: ColorRect) -> void:
-	overlay.queue_free()
+func _pause_to_levels(overlay: Control) -> void:
+	if is_instance_valid(overlay):
+		overlay.queue_free()
 	show_levels()
 
-func _pause_to_home(overlay: ColorRect) -> void:
-	overlay.queue_free()
+func _pause_to_home(overlay: Control) -> void:
+	if is_instance_valid(overlay):
+		overlay.queue_free()
 	show_home()
 
 func show_pause() -> void:
@@ -718,6 +814,7 @@ func show_pause() -> void:
 	ov.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ov.color = Color(0, 0, 0, 0.78)
 	screen_root.add_child(ov)
+	_pause_overlay = ov
 	var center := CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ov.add_child(center)
@@ -744,7 +841,8 @@ func _show_result(won: bool) -> void:
 	await get_tree().create_timer(0.55).timeout
 	var expected := GameData.Status.WON if won else GameData.Status.LOST
 	if game_status != expected: return
-	_clear_ui()
+	_enter_menu_screen(UiScreen.RESULT)
+	save.refresh_lives()
 	_background("res://assets/images/bg_victory.jpg" if won
 		else "res://assets/images/bg_menu.jpg")
 	var box := _content_scroll()
@@ -754,7 +852,7 @@ func _show_result(won: bool) -> void:
 	box.add_child(_label(
 		"SCORE  %d\nMOVES LEFT  %d\nBEST STARS  %d" % [
 			score, moves,
-			max(stars, int(save.level(current_level).get("stars", 0)))],
+			maxi(stars, int(save.level(current_level).get("stars", 0)))],
 		F_STAT, Color("#d4d8ff")))
 	if won:
 		box.add_child(_button("▶  NEXT LEVEL",
@@ -766,7 +864,8 @@ func _show_result(won: bool) -> void:
 		else:
 			box.add_child(_button("WATCH AD FOR 1 LIFE",
 				_reward_life_notice, H_LG, F_BTN, true))
-	if not won and moves > 0:
+		# The old condition was "moves > 0", but a lost game always has 0 moves
+		# left, so this button could never appear.
 		box.add_child(_button("+5 MOVES  (%d coins)" % EXTRA_MOVES_COST,
 			_resume_with_extra_moves, H_BTN, F_BTN))
 	box.add_child(_button("↺  REPLAY",  func(): start_level(current_level), H_BTN, F_BTN))
@@ -784,32 +883,43 @@ func _resume_with_extra_moves() -> void:
 		_toast("You need %d coins" % EXTRA_MOVES_COST)
 
 func _reward_life_notice() -> void:
-	if platform:
-		platform.show_rewarded("life")
-		_toast("Watch the rewarded ad to receive 1 life")
+	if platform and platform.show_rewarded("life"):
+		_toast("Watch the ad to receive 1 life")
+	else:
+		_toast("No ad available right now - try again shortly")
 
 func _on_rewarded_earned(reward_type: String) -> void:
 	match reward_type:
 		"life":  save.add_life();    _toast("+1 life")
 		"hint":  save.add_hints(1);  _toast("+1 hint")
 		"coins": save.add_coins(50); _toast("+50 coins")
+		_:       save.add_coins(50); _toast("+50 coins")
+	if current_screen == UiScreen.RESULT:
+		_show_result_refresh()
+
+# After a life is granted from the game-over screen, rebuild it so RETRY shows.
+func _show_result_refresh() -> void:
+	if game_status == GameData.Status.LOST:
+		_show_result(false)
 
 func _on_purchase_completed(product_id: String) -> void:
-	_toast("Purchase complete: %s" % product_id);  show_shop()
+	_toast("Purchase complete: %s" % product_id)
+	if current_screen == UiScreen.SHOP:
+		show_shop()
 
 func _on_purchase_failed(_product_id: String, message: String) -> void:
 	_toast("Purchase unavailable: %s" % message)
 
 # ── TUTORIAL ──────────────────────────────────────────────────────────────────
 
-func _close_tutorial(overlay: ColorRect) -> void:
-	overlay.queue_free()
+func _close_tutorial(overlay: Control) -> void:
+	if is_instance_valid(overlay):
+		overlay.queue_free()
 	tutorial_visible     = false
 	save.data.tutorial   = true
 	save.save()
 
 func _show_tutorial() -> void:
-	_trail("_show_tutorial begin")
 	tutorial_visible = true
 	var ov := ColorRect.new()
 	ov.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -835,17 +945,17 @@ func _show_tutorial() -> void:
 		+ "5. Fewer moves used = more stars earned.\n\n"
 		+ "Use the CAM button to rotate the 3D camera around the board.")
 	inst.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	inst.custom_minimum_size = Vector2(900, 0)
 	inst.add_theme_font_size_override("font_size", F_BODY)
 	inst.add_theme_color_override("font_color", Color("#d8def8"))
 	box.add_child(inst)
 	box.add_child(_button("GOT IT  ▶",
 		func(): _close_tutorial(ov), H_LG, F_BTN, true))
-	_trail("_show_tutorial complete")
 
 # ── SHOP ──────────────────────────────────────────────────────────────────────
 
 func show_shop() -> void:
-	_clear_ui()
+	_enter_menu_screen(UiScreen.SHOP)
 	_background()
 	var box := _content_scroll()
 	box.add_child(_title_block("SHOP", "Coins, hints and premium items"))
@@ -867,17 +977,16 @@ func show_shop() -> void:
 		box.add_child(_button(item[0], item[1], H_BTN, F_BTN))
 	box.add_child(_button("‹  BACK", show_home, H_SM, F_BTN_S))
 
+# The failure toast used to be overwritten by "Opening Google Play checkout",
+# so a failed purchase looked like it had started.
 func _purchase(product_id: String) -> void:
-	if platform:
-		platform.purchase(product_id)
+	if platform and platform.purchase(product_id):
 		_toast("Opening Google Play checkout…")
-	else:
-		_toast("Google Play Billing is unavailable")
 
 # ── SETTINGS ──────────────────────────────────────────────────────────────────
 
 func show_settings() -> void:
-	_clear_ui()
+	_enter_menu_screen(UiScreen.SETTINGS)
 	_background()
 	var box := _content_scroll()
 	box.add_child(_title_block("SETTINGS"))
@@ -902,25 +1011,54 @@ func _toggle_music() -> void:
 	save.set_setting("music", en);  audio.set_music(en);  show_settings()
 
 func _toggle_vibration() -> void:
-	save.set_setting("vibration", not bool(save.data.vibration));  show_settings()
+	save.set_setting("vibration", not bool(save.data.vibration))
+	_vibrate(40)
+	show_settings()
 
+func _do_reset() -> void:
+	save.reset_all()
+	audio.enabled = bool(save.data.sound)
+	audio.set_music(bool(save.data.music))
+	show_home()
+
+# Same styling as the rest of the game (the stock ConfirmationDialog rendered
+# in tiny default fonts on a 1080-wide canvas).
 func _confirm_reset() -> void:
-	var dlg := ConfirmationDialog.new()
-	dlg.title       = "Reset all progress?"
-	dlg.dialog_text = (
-		"This permanently erases all coins, lives, stars, "
+	var ov := ColorRect.new()
+	ov.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ov.color = Color(0, 0, 0, 0.82)
+	screen_root.add_child(ov)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ov.add_child(center)
+	var mrg := MarginContainer.new()
+	mrg.add_theme_constant_override("margin_left",  MRG)
+	mrg.add_theme_constant_override("margin_right", MRG)
+	center.add_child(mrg)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", SEP)
+	mrg.add_child(box)
+	box.add_child(_title_block("RESET PROGRESS?"))
+	var msg := Label.new()
+	msg.text = ("This permanently erases all coins, lives, stars, "
 		+ "levels and settings on this device.\nThis cannot be undone.")
-	screen_root.add_child(dlg)
-	dlg.confirmed.connect(func(): save.reset_all(); show_home())
-	dlg.popup_centered()
+	msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	msg.custom_minimum_size = Vector2(900, 0)
+	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	msg.add_theme_font_size_override("font_size", F_BODY)
+	msg.add_theme_color_override("font_color", Color("#d8def8"))
+	box.add_child(msg)
+	box.add_child(_button("YES, ERASE EVERYTHING", _do_reset, H_BTN, F_BTN, true))
+	box.add_child(_button("CANCEL", func(): ov.queue_free(), H_BTN, F_BTN))
 
 # ── TOAST ─────────────────────────────────────────────────────────────────────
 
 func _toast(msg: String) -> void:
-	if not is_inside_tree() or not screen_root: return
+	if not is_inside_tree() or screen_root == null: return
 	if toast_node and is_instance_valid(toast_node):
 		toast_node.queue_free()
 	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_theme_stylebox_override("panel", _style(Color(0.06, 0.08, 0.26, 0.94), 16))
 	panel.anchor_left   = 0.0;  panel.anchor_right  = 1.0
 	panel.anchor_top    = 1.0;  panel.anchor_bottom = 1.0
@@ -934,8 +1072,8 @@ func _toast(msg: String) -> void:
 	lbl.add_theme_font_size_override("font_size", F_TOAST)
 	lbl.add_theme_color_override("font_color", Color.WHITE)
 	panel.add_child(lbl)
-	var ref := panel
-	var tw  := create_tween()
+	# Tween is owned by the panel, so it dies with it if the screen changes.
+	var tw := panel.create_tween()
 	tw.tween_interval(1.6)
-	tw.tween_property(ref, "modulate:a", 0.0, 0.35)
-	tw.tween_callback(ref.queue_free)
+	tw.tween_property(panel, "modulate:a", 0.0, 0.35)
+	tw.tween_callback(panel.queue_free)
