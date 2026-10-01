@@ -14,6 +14,7 @@ var base: MeshInstance3D
 var _rim_mat: StandardMaterial3D
 var _base_mat: StandardMaterial3D
 var _highlighted := false
+var _tap := TapFilter.new()
 
 func setup(index: int, cap: int) -> void:
 	tube_index = index
@@ -94,9 +95,7 @@ func setup(index: int, cap: int) -> void:
 	area.input_event.connect(_on_input)
 
 func _on_input(_camera: Node, event: InputEvent, _position: Vector3, _normal: Vector3, _shape_idx: int) -> void:
-	if event is InputEventScreenTouch and event.pressed:
-		tapped.emit(tube_index)
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+	if _tap.feed(event):
 		tapped.emit(tube_index)
 
 func set_highlight(value: bool) -> void:

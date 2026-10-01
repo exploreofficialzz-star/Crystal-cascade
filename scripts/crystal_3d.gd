@@ -18,6 +18,7 @@ var slot_index := 0
 var phase := 0.0
 var pulse := 0.0
 var mesh: MeshInstance3D
+var _tap := TapFilter.new()
 
 static func _base_color(color_name: String) -> Color:
 	if GameData.COLOR_HEX.has(color_name):
@@ -90,9 +91,7 @@ func setup(color_name: String, local_pos: Vector3, seed_phase: float, index: int
 	area.input_event.connect(_on_input)
 
 func _on_input(_camera: Node, event: InputEvent, _position: Vector3, _normal: Vector3, _shape_idx: int) -> void:
-	if event is InputEventScreenTouch and event.pressed:
-		tapped.emit(self)
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+	if _tap.feed(event):
 		tapped.emit(self)
 
 func set_selected(value: bool) -> void:
