@@ -40,7 +40,7 @@ static func level_info(id: int) -> Dictionary:
         gems = clamp(6 + int(block / 2), 6, 12)
         capacity = gems
         var total := colors * gems
-        var ratio := clamp(2.1 - block * 0.03, 1.35, 2.1)
+        var ratio := clampf(2.1 - block * 0.03, 1.35, 2.1)
         moves = int(ceil(total * ratio))
     var names: Array[String] = []
     for i in range(colors):
