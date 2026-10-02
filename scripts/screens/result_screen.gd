@@ -14,7 +14,8 @@ signal watch_life_pressed
 # Level-complete / game-over screen. Everything that earns money is surfaced
 # here: double the coins for a video, free moves for a video, a life for a video.
 func setup(won: bool, stars: int, score: int, coins_earned: int, lives: int,
-		extra_moves_cost: int, rewarded_ready: bool, total_coins: int) -> void:
+		extra_moves_cost: int, rewarded_ready: bool, total_coins: int,
+		win_streak: int = 0, streak_bonus: int = 0) -> void:
 	Ui.full_rect(self)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	Ui.background(self, "res://assets/images/bg_victory.jpg" if won else "res://assets/images/bg_menu.jpg", 0.45 if won else 0.62)
@@ -66,6 +67,13 @@ func setup(won: bool, stars: int, score: int, coins_earned: int, lives: int,
 		earn.add_child(Ui.icon("coin", 40, Ui.GOLD))
 		earn.add_child(Ui.label("+%d coins earned" % coins_earned, 34, Ui.GOLD))
 		cv.add_child(earn)
+		if win_streak >= 2:
+			var st := HBoxContainer.new()
+			st.alignment = BoxContainer.ALIGNMENT_CENTER
+			st.add_theme_constant_override("separation", 12)
+			st.add_child(Ui.icon("flame", 40, Color("#ffb347")))
+			st.add_child(Ui.label("Win streak x%d   +%d coins" % [win_streak, streak_bonus], 32, Color("#ffb347"), HORIZONTAL_ALIGNMENT_CENTER, true))
+			cv.add_child(st)
 	col.add_child(card)
 
 	col.add_child(Ui.vspace(8))
@@ -107,6 +115,7 @@ func setup(won: bool, stars: int, score: int, coins_earned: int, lives: int,
 	hm.pressed.connect(func(): home_pressed.emit())
 	col.add_child(hm)
 	col.add_child(Ui.vspace(30))
+	Ui.scroll_friendly(col)
 
 func _confetti() -> void:
 	var p := CPUParticles2D.new()

@@ -1,21 +1,34 @@
 extends Node3D
 
-# Game orchestrator: navigation, game rules, and the glue between screens, the
-# 3D world, ads and purchases. Screens live in scripts/screens, widgets in
-# scripts/ui, the ad/billing bridge in scripts/services/android_platform.gd.
+# Game orchestrator: launch sequence, navigation, game rules, power-ups, retention
+# systems and the glue between screens, the 3D world, ads and purchases.
+# Screens live in scripts/screens, widgets in scripts/ui, the ad/billing bridge
+# in scripts/services/android_platform.gd.
 
 const HINT_COST := 40
 const EXTRA_MOVES_COST := 30
 const EXTRA_TUBE_COST := 100
 const LEVEL_COMPLETE_COINS := 5
+const MAX_TUBES := 10
+const NUDGE_AFTER := 14.0
+const MIN_SPLASH_MS := 2600
 
 const CHEERS := ["Nice one!", "Sparkling!", "Great match!", "Crystal clear!", "You got it!", "Brilliant!"]
 const OOPS := ["Hmm, not there.", "Try another tube!", "Careful now!"]
 const PICKS := ["Good choice.", "Where to?", "Ooh, that one."]
 const LOW := ["Only a few moves left!", "Think carefully!"]
 const GREETINGS := ["Let's go!", "You can do it!", "Ready when you are!"]
+const POKES := ["Hehe, that tickles!", "Hi there!", "Need me?", "Let's play!"]
 
-enum UiScreen { NONE, HOME, LEVELS, GAME, SHOP, SETTINGS, RESULT, DIAGNOSTICS }
+const PRELOAD_ICONS := [
+	"ad_free", "arrow_right", "back", "bag", "bulb", "calendar", "camera", "check", "chest",
+	"chevron_right", "clock", "close", "coin", "diamond", "flame", "gear", "gift", "grid",
+	"heart", "home", "lock", "moon", "moves", "music", "pause", "play", "plus", "restore",
+	"scroll", "share", "sound", "star", "star_outline", "sun", "trash", "trophy", "tube",
+	"vibrate", "video", "wallet",
+]
+
+enum UiScreen { NONE, HOME, LEVELS, GAME, SHOP, REWARDS, SETTINGS, RESULT }
 
 # ── State ─────────────────────────────────────────────────────────────────────
 var save: SaveData
@@ -27,6 +40,7 @@ var screen_root: Control
 var overlay_root: Control
 var screen: Control = null
 var hud: GameHud = null
+var splash: SplashScreen = null
 
 var current_screen: UiScreen = UiScreen.NONE
 var game_status := GameData.Status.IDLE
@@ -41,10 +55,19 @@ var combo := 0
 var stars := 0
 var coins_earned := 0
 var _doubled := false
+var _streak_bonus := 0
+var _hints_used_level := 0
+var _idle_time := 0.0
+var _idle_nudged := false
+var _pending_pu := ""
+var _chest_reward: Dictionary = {}
+var _chest_wait := false
+var _login_double_wait := false
 var _modal: Control = null
 var _toast_node: Control = null
 var _banner_reserve := 0
 var _back_armed_until_ms := 0
+var _last_poke_ms := 0
 
 # ── Crash trail (diagnostics) ─────────────────────────────────────────────────
 # Every risky step is written to a small file and flushed immediately. Hidden in
@@ -109,7 +132,7 @@ func _notification(what: int) -> void:
 	elif what == NOTIFICATION_WM_GO_BACK_REQUEST:
 		_handle_back()
 
-# ── Bootstrap ─────────────────────────────────────────────────────────────────
+# ── Launch sequence ───────────────────────────────────────────────────────────
 
 func _ready() -> void:
 	_prev_trail_text = _read_trail_file()
@@ -123,12 +146,53 @@ func _ready() -> void:
 	audio = AudioManager.new()
 	add_child(audio)
 	audio.enabled = bool(save.data.sound)
+	audio.voice_enabled = bool(save.data.voice)
+	Ui.sfx_target = self
+	_build_root_ui()
+	splash = SplashScreen.new()
+	overlay_root.add_child(splash)
+	splash.setup()
+	await get_tree().process_frame
+	await _boot(crashed)
+	_trail("main._ready complete")
+
+func _asset_paths() -> Array:
+	var paths: Array = []
+	for n in PRELOAD_ICONS:
+		paths.append("res://assets/icons/%s.png" % n)
+	for n in ["pink", "blue", "gold", "green", "purple", "red"]:
+		paths.append("res://assets/ui/btn_%s.png" % n)
+	for n in ["bg_menu.jpg", "bg_levelselect.jpg", "bg_victory.jpg", "game_logo.png"]:
+		paths.append("res://assets/images/%s" % n)
+	for n in ["wood_planks", "velvet", "rune_rug", "lab_backdrop"]:
+		paths.append("res://assets/textures/%s.png" % n)
+	return paths
+
+# Preloads art and sound, builds the 3D world, starts the ad/billing plugins and
+# warms up the shaders behind the splash screen, then reveals the home screen.
+func _boot(crashed: bool) -> void:
+	var t0 := Time.get_ticks_msec()
+	splash.set_progress(0.04, "Polishing crystals…")
+	var paths := _asset_paths()
+	for i in range(paths.size()):
+		Ui.tex(paths[i])
+		if i % 8 == 7:
+			splash.set_progress(0.04 + 0.30 * float(i) / float(paths.size()), "Polishing crystals…")
+			await get_tree().process_frame
+	splash.set_progress(0.36, "Tuning the sounds…")
+	for i in range(audio.preload_count()):
+		audio.preload_one(i)
+		if i % 5 == 4:
+			await get_tree().process_frame
+	splash.set_progress(0.50, "Building the table…")
+	await get_tree().process_frame
 	world = GameWorld.new()
 	add_child(world)
 	world.build()
 	world.set_active(false)
+	world.set_auto_camera(bool(save.data.auto_camera))
 	_trail("world.build() returned")
-	Ui.sfx_target = self
+	splash.set_progress(0.62, "Connecting…")
 	platform = AndroidPlatform.new()
 	add_child(platform)
 	platform.diagnostic.connect(_trail)
@@ -140,15 +204,42 @@ func _ready() -> void:
 	platform.prices_updated.connect(_on_prices_updated)
 	platform.banner_height_changed.connect(_on_banner_height)
 	platform.setup(save)
-	_build_root_ui()
 	await get_tree().process_frame
+	splash.set_progress(0.72, "Waking Cass…")
+	await _warm_up()
+	splash.set_progress(1.0, "Ready!")
+	while Time.get_ticks_msec() - t0 < MIN_SPLASH_MS or not splash.is_done():
+		await get_tree().process_frame
 	audio.set_music(bool(save.data.music))
+	show_home()
+	splash.fade_out()
+	splash = null
+	audio.play_voice("hello")
 	if crashed and SHOW_CRASH_TRAIL:
-		_trail("previous run did not close cleanly")
 		_show_diagnostics()
 	else:
-		show_home()
-	_trail("main._ready complete")
+		await get_tree().create_timer(0.7).timeout
+		_maybe_show_daily_login()
+
+# Draws one real board and one avatar frame behind the splash so every shader is
+# compiled before the first level (otherwise the first level start stutters).
+func _warm_up() -> void:
+	var avatar := AvatarPortrait.new()
+	avatar.modulate = Color(1, 1, 1, 0.02)
+	overlay_root.add_child(avatar)
+	overlay_root.move_child(avatar, 0)
+	current_level = 1
+	level_info = GameData.level_info(1)
+	_make_board()
+	world.set_active(true)
+	for _i in range(3):
+		await get_tree().process_frame
+	world.set_active(false)
+	for child in world.tubes_root.get_children():
+		world.tubes_root.remove_child(child)
+		child.queue_free()
+	tubes.clear()
+	avatar.queue_free()
 
 # Safe-area insets (status bar / camera cut-out / gesture bar) in canvas units.
 func _compute_insets() -> void:
@@ -200,7 +291,8 @@ func _enter(kind: UiScreen) -> void:
 	hud = null
 	current_screen = kind
 	world.set_active(kind == UiScreen.GAME)
-	if kind == UiScreen.SHOP or kind == UiScreen.LEVELS:
+	# The only banner left is on Level Select (none on Shop, Rewards or in play).
+	if kind == UiScreen.LEVELS:
 		platform.show_banner()
 	else:
 		platform.hide_banner()
@@ -231,6 +323,7 @@ func show_home() -> void:
 	s.shop_pressed.connect(show_shop)
 	s.settings_pressed.connect(show_settings)
 	s.share_pressed.connect(_share)
+	s.rewards_pressed.connect(show_rewards)
 
 func _on_play() -> void:
 	start_level(int(save.data.highest_unlocked))
@@ -263,8 +356,11 @@ func show_shop() -> void:
 	s.purchase_requested.connect(_purchase)
 	s.watch_coins_requested.connect(_watch.bind("coins"))
 	s.watch_hint_requested.connect(_watch.bind("hint"))
+	s.watch_life_requested.connect(_watch.bind("life"))
 	s.bonus_requested.connect(_claim_daily_bonus)
-	_apply_banner_reserve()
+	s.rewards_requested.connect(show_rewards)
+	s.coins_for_hints_requested.connect(_buy_hints)
+	s.coins_for_lives_requested.connect(_refill_lives)
 
 # Rebuilds the shop but keeps the scroll position.
 func _refresh_shop() -> void:
@@ -282,11 +378,33 @@ func _claim_daily_bonus() -> void:
 		_toast("+%d coins claimed!" % SaveData.DAILY_BONUS)
 		_refresh_shop()
 
+func _buy_hints() -> void:
+	if save.spend_coins(ShopScreen.HINT_BUNDLE_COST):
+		save.add_hints(ShopScreen.HINT_BUNDLE_COUNT)
+		audio.play("coin")
+		_toast("+%d hints" % ShopScreen.HINT_BUNDLE_COUNT)
+		_refresh_shop()
+	else:
+		_toast("You need %d coins. Watch a video for free coins!" % ShopScreen.HINT_BUNDLE_COST)
+
+func _refill_lives() -> void:
+	if int(save.data.lives) >= SaveData.MAX_LIVES:
+		_toast("Your lives are already full")
+		return
+	if save.spend_coins(ShopScreen.LIFE_REFILL_COST):
+		while int(save.data.lives) < SaveData.MAX_LIVES:
+			save.add_life()
+		audio.play("coin")
+		_toast("Lives refilled!")
+		_refresh_shop()
+	else:
+		_toast("You need %d coins. Watch a video for free coins!" % ShopScreen.LIFE_REFILL_COST)
+
 func _purchase(product_id: String) -> void:
 	if platform.purchase(product_id):
 		_toast("Opening Google Play…")
 
-func _on_purchase_completed(product_id: String) -> void:
+func _on_purchase_completed(_product_id: String) -> void:
 	audio.play("coin")
 	_toast("Purchase complete!")
 	_refresh_shop()
@@ -303,6 +421,131 @@ func _on_restore_finished(count: int) -> void:
 func _on_prices_updated() -> void:
 	_refresh_shop()
 
+# ── REWARDS HUB (login streak, quests, milestones) ───────────────────────────
+
+func show_rewards() -> void:
+	game_status = GameData.Status.IDLE
+	_enter(UiScreen.REWARDS)
+	var s := RewardsScreen.new()
+	_attach(s)
+	s.setup(save)
+	s.back_pressed.connect(show_home)
+	s.claim_login_pressed.connect(_claim_login_hub)
+	s.claim_quest_pressed.connect(_claim_quest)
+	s.claim_milestone_pressed.connect(_claim_milestone)
+
+func _refresh_rewards() -> void:
+	if current_screen != UiScreen.REWARDS or screen == null:
+		return
+	var sv: int = int(screen.call("get_scroll"))
+	show_rewards()
+	await get_tree().process_frame
+	if current_screen == UiScreen.REWARDS and screen != null:
+		screen.call("set_scroll", sv)
+
+func _claim_login_hub() -> void:
+	_do_claim_login(1)
+
+func _claim_login_popup() -> void:
+	_do_claim_login(1)
+
+func _do_claim_login(mult: int) -> void:
+	var day := save.claim_login()
+	if day <= 0:
+		return
+	var r: Dictionary = Rewards.LOGIN[day - 1]
+	for _i in range(mult):
+		Rewards.grant(save, r)
+	audio.play("streak_up")
+	audio.play_voice("yay")
+	_toast("Day %d reward: %s%s" % [day, Rewards.describe(r), "  (x2!)" if mult > 1 else ""])
+	if current_screen == UiScreen.REWARDS:
+		_refresh_rewards()
+	elif current_screen == UiScreen.HOME:
+		show_home()
+
+func _login_double() -> void:
+	_login_double_wait = true
+	if not platform.show_rewarded("login_double"):
+		_login_double_wait = false
+		_toast("No video available. Claimed normally.")
+		_do_claim_login(1)
+
+func _maybe_show_daily_login() -> void:
+	if current_screen != UiScreen.HOME or not save.login_available() or is_instance_valid(_modal):
+		return
+	var day := save.login_day_if_claimed()
+	var r: Dictionary = Rewards.LOGIN[day - 1]
+	audio.play("ui_chime")
+	_modal = Modals.daily_login(overlay_root, day, Rewards.describe(r),
+		Rewards.icon_for(str(r["type"])), platform.is_rewarded_ready(), _claim_login_popup, _login_double)
+
+func _quest_def(id: String) -> Dictionary:
+	for q in Rewards.QUEST_POOL:
+		var quest: Dictionary = q
+		if str(quest["id"]) == id:
+			return quest
+	return {}
+
+func _claim_quest(id: String) -> void:
+	var q := _quest_def(id)
+	if q.is_empty() or save.quest_is_claimed(id):
+		return
+	if save.quest_progress_of(id) < int(q["goal"]):
+		return
+	Rewards.grant(save, q)
+	save.quest_mark_claimed(id)
+	audio.play("coin")
+	_toast("Quest reward: %s" % Rewards.describe(q))
+	_refresh_rewards()
+
+func _claim_milestone(star_goal: int) -> void:
+	if save.milestone_is_claimed(star_goal) or int(save.data.total_stars) < star_goal:
+		return
+	for m in Rewards.MILESTONES:
+		var ms: Dictionary = m
+		if int(ms["stars"]) == star_goal:
+			Rewards.grant(save, ms)
+			save.milestone_mark_claimed(star_goal)
+			audio.play("coin")
+			_toast("Milestone reward: %s" % Rewards.describe(ms))
+			_refresh_rewards()
+			return
+
+# ── Treasure chest (every 3rd win) ───────────────────────────────────────────
+
+func _roll_chest() -> Dictionary:
+	var r := randf()
+	if r < 0.6:
+		return {"type": "coins", "amount": 40 + 10 * (randi() % 7)}
+	if r < 0.85:
+		return {"type": "hints", "amount": 2}
+	return {"type": "lives", "amount": 1}
+
+func _maybe_offer_chest() -> void:
+	if not save.chest_ready():
+		return
+	await get_tree().create_timer(1.0).timeout
+	if current_screen != UiScreen.RESULT or game_status != GameData.Status.WON or is_instance_valid(_modal):
+		return
+	_chest_reward = _roll_chest()
+	audio.play("chest_open")
+	_modal = Modals.chest(overlay_root, Rewards.describe(_chest_reward),
+		Rewards.icon_for(str(_chest_reward["type"])), platform.is_rewarded_ready(), _collect_chest, _double_chest)
+
+func _collect_chest() -> void:
+	Rewards.grant(save, _chest_reward)
+	save.chest_opened()
+	audio.play("coin")
+	_toast("Chest: %s" % Rewards.describe(_chest_reward))
+
+func _double_chest() -> void:
+	_chest_wait = true
+	if not platform.show_rewarded("chest_double"):
+		_chest_wait = false
+		_toast("No video available. Collected normally.")
+		_collect_chest()
+
 # ── SETTINGS ──────────────────────────────────────────────────────────────────
 
 func show_settings() -> void:
@@ -315,6 +558,8 @@ func show_settings() -> void:
 	s.sound_toggled.connect(_set_sound)
 	s.music_toggled.connect(_set_music)
 	s.vibration_toggled.connect(_set_vibration)
+	s.voice_toggled.connect(_set_voice)
+	s.auto_camera_toggled.connect(_set_auto_camera)
 	s.restore_pressed.connect(_restore)
 	s.reset_pressed.connect(_confirm_reset)
 	s.privacy_pressed.connect(_open_privacy)
@@ -331,6 +576,16 @@ func _set_music(v: bool) -> void:
 func _set_vibration(v: bool) -> void:
 	save.set_setting("vibration", v)
 	_vibrate(40)
+
+func _set_voice(v: bool) -> void:
+	save.set_setting("voice", v)
+	audio.voice_enabled = v
+	if v:
+		audio.play_voice("giggle")
+
+func _set_auto_camera(v: bool) -> void:
+	save.set_setting("auto_camera", v)
+	world.set_auto_camera(v)
 
 func _restore() -> void:
 	if platform.has_billing():
@@ -350,7 +605,9 @@ func _confirm_reset() -> void:
 func _do_reset() -> void:
 	save.reset_all()
 	audio.enabled = bool(save.data.sound)
+	audio.voice_enabled = bool(save.data.voice)
 	audio.set_music(bool(save.data.music))
+	world.set_auto_camera(bool(save.data.auto_camera))
 	show_home()
 	_toast("Progress reset")
 
@@ -395,6 +652,7 @@ func _copy_text(text: String) -> void:
 func _handle_back() -> void:
 	if is_instance_valid(_modal):
 		if current_screen == UiScreen.GAME and game_status == GameData.Status.PAUSED:
+			_pending_pu = ""
 			_pause_resume()
 		_close_modal()
 		return
@@ -402,7 +660,7 @@ func _handle_back() -> void:
 		UiScreen.GAME:
 			if game_status == GameData.Status.PLAYING:
 				show_pause()
-		UiScreen.LEVELS, UiScreen.SHOP, UiScreen.SETTINGS, UiScreen.RESULT:
+		UiScreen.LEVELS, UiScreen.SHOP, UiScreen.REWARDS, UiScreen.SETTINGS, UiScreen.RESULT:
 			show_home()
 		UiScreen.HOME:
 			var now := Time.get_ticks_msec()
@@ -424,6 +682,16 @@ func _watch(kind: String) -> void:
 		_toast("No video available right now. Try again in a moment.")
 
 func _on_rewarded_cancelled() -> void:
+	if _login_double_wait:
+		_login_double_wait = false
+		_do_claim_login(1)
+		return
+	if _chest_wait:
+		_chest_wait = false
+		_collect_chest()
+		return
+	if _pending_pu != "":
+		_pu_cancel()
 	_toast("Watch the whole video to get the reward")
 
 func _on_rewarded_earned(kind: String) -> void:
@@ -438,6 +706,8 @@ func _on_rewarded_earned(kind: String) -> void:
 			_toast("+1 life")
 			if current_screen == UiScreen.RESULT:
 				_build_result(game_status == GameData.Status.WON)
+			else:
+				_refresh_shop()
 		"moves":
 			_resume_with_moves(ProductionConfig.REWARD_EXTRA_MOVES)
 		"double":
@@ -447,6 +717,18 @@ func _on_rewarded_earned(kind: String) -> void:
 			_toast("Coins doubled!")
 			if current_screen == UiScreen.RESULT:
 				_build_result(true)
+		"pu_hint", "pu_moves", "pu_tube":
+			var effect := kind.substr(3)
+			_pending_pu = ""
+			_pause_resume()
+			_apply_powerup(effect)
+		"login_double":
+			_login_double_wait = false
+			_do_claim_login(2)
+		"chest_double":
+			_chest_wait = false
+			Rewards.grant(save, _chest_reward)
+			_collect_chest()
 		_:
 			save.add_coins(ProductionConfig.REWARD_VIDEO_COINS)
 			_toast("+%d coins" % ProductionConfig.REWARD_VIDEO_COINS)
@@ -461,6 +743,17 @@ func _start_after_ad(id: int) -> void:
 
 # ── GAME ──────────────────────────────────────────────────────────────────────
 
+func _create_hud() -> void:
+	hud = GameHud.new()
+	_attach(hud)
+	hud.setup()
+	hud.pause_pressed.connect(show_pause)
+	hud.hint_pressed.connect(_open_powerup.bind("hint"))
+	hud.moves_pressed.connect(_open_powerup.bind("moves"))
+	hud.tube_pressed.connect(_open_powerup.bind("tube"))
+	hud.voice_requested.connect(_on_voice)
+	hud.avatar_poked.connect(_on_avatar_poked)
+
 func start_level(id: int) -> void:
 	_trail("===== start_level(%d) begin =====" % id)
 	current_level = id
@@ -471,23 +764,22 @@ func start_level(id: int) -> void:
 	stars = 0
 	coins_earned = 0
 	_doubled = false
+	_streak_bonus = 0
+	_hints_used_level = 0
+	_idle_time = 0.0
+	_idle_nudged = false
+	_pending_pu = ""
 	selected = -1
 	hint_destination = -1
 	game_status = GameData.Status.PLAYING
 	_enter(UiScreen.GAME)
-	hud = GameHud.new()
-	_attach(hud)
-	hud.setup()
-	hud.pause_pressed.connect(show_pause)
-	hud.hint_pressed.connect(_hint)
-	hud.moves_pressed.connect(_extra_moves)
-	hud.tube_pressed.connect(_extra_tube)
-	hud.camera_pressed.connect(_next_camera)
+	_create_hud()
 	_make_board()
 	world.calm()
+	audio.play("ui_whoosh")
 	_refresh_hud()
 	hud.show_banner("LEVEL %d" % id)
-	hud.say(GREETINGS[randi() % GREETINGS.size()], "happy")
+	hud.say(GREETINGS[randi() % GREETINGS.size()], "wave", "hello")
 	if current_level == 1 and not bool(save.data.tutorial):
 		_show_tutorial()
 	_trail("===== start_level(%d) complete =====" % id)
@@ -560,13 +852,10 @@ func _refresh_hud() -> void:
 	if hud != null:
 		hud.update_stats(current_level, moves, score, int(save.data.coins), int(save.data.hints))
 
-func _next_camera() -> void:
-	world.next_camera()
-
-# Drag on the table to orbit the camera (taps are filtered in TapFilter, so a
-# drag that starts on a tube never selects it).
+# Drag on the table to take over the camera (taps are filtered in TapFilter, so a
+# drag that starts on a tube never selects it). Auto camera resumes afterwards.
 func _unhandled_input(event: InputEvent) -> void:
-	if current_screen != UiScreen.GAME or game_status != GameData.Status.PLAYING:
+	if world == null or current_screen != UiScreen.GAME or game_status != GameData.Status.PLAYING:
 		return
 	if event is InputEventScreenDrag:
 		world.orbit_drag(event.relative)
@@ -574,9 +863,30 @@ func _unhandled_input(event: InputEvent) -> void:
 		if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
 			world.orbit_drag(event.relative)
 
-# Runs inside the physics-picking signal: just defer.
-func _on_tube_tapped(index: int) -> void:
-	_handle_tap.call_deferred(index)
+func _process(delta: float) -> void:
+	if current_screen == UiScreen.GAME and game_status == GameData.Status.PLAYING and hud != null:
+		_idle_time += delta
+		if _idle_time > NUDGE_AFTER and not _idle_nudged:
+			_idle_nudged = true
+			_cass("Stuck? Tap HINT for help!", "think", "think")
+
+# Cass: speech bubble + body/face reaction + optional voice line.
+func _cass(text: String, mood: String, voice: String = "") -> void:
+	if hud != null:
+		hud.say(text, mood, voice)
+
+func _on_voice(kind: String) -> void:
+	var length := audio.play_voice(kind)
+	if length > 0.0 and hud != null:
+		hud.avatar.speak(length)
+
+func _on_avatar_poked() -> void:
+	var now := Time.get_ticks_msec()
+	if now - _last_poke_ms < 1200 or hud == null:
+		return
+	_last_poke_ms = now
+	_idle_time = 0.0
+	_cass(POKES[randi() % POKES.size()], "wave", "giggle")
 
 func _glow_for(tube_index: int) -> void:
 	if hud == null or tubes[tube_index].is_empty():
@@ -585,11 +895,17 @@ func _glow_for(tube_index: int) -> void:
 	if GameData.COLOR_HEX.has(top):
 		hud.avatar.set_glow(GameData.COLOR_HEX[top])
 
+# Runs inside the physics-picking signal: just defer.
+func _on_tube_tapped(index: int) -> void:
+	_handle_tap.call_deferred(index)
+
 func _handle_tap(index: int) -> void:
 	if game_status != GameData.Status.PLAYING or hud == null:
 		return
 	if index < 0 or index >= tubes.size():
 		return
+	_idle_time = 0.0
+	_idle_nudged = false
 	hint_destination = -1
 	if selected == -1:
 		if not tubes[index].is_empty():
@@ -599,7 +915,7 @@ func _handle_tap(index: int) -> void:
 			hud.avatar.look_at_screen(world.tube_screen_pos(index))
 			audio.play("tap")
 			if randi() % 4 == 0:
-				hud.say(PICKS[randi() % PICKS.size()], "think")
+				_cass(PICKS[randi() % PICKS.size()], "think", "hmm" if randi() % 2 == 0 else "")
 	elif selected == index:
 		selected = -1
 		world.release_focus()
@@ -620,7 +936,7 @@ func _move_gem(from_i: int, to_i: int) -> void:
 	if not tubes[to_i].is_empty() and tubes[to_i][-1] != col:
 		_invalid_move()
 		return
-	world.focus_on_tube(to_i)
+	world.cam_move(from_i, to_i)
 	world.pulse_camera(0.10)
 	hud.avatar.look_at_screen(world.tube_screen_pos(to_i))
 	tubes[from_i].pop_back()
@@ -629,9 +945,10 @@ func _move_gem(from_i: int, to_i: int) -> void:
 	score += 10
 	selected = -1
 	audio.play("tap")
+	hud.avatar.react("happy")
 	_check_match(to_i)
 	if game_status == GameData.Status.PLAYING and moves <= 3 and moves > 0:
-		hud.say(LOW[randi() % LOW.size()], "sad")
+		_cass(LOW[randi() % LOW.size()], "sad", "sigh")
 	_check_win_condition()
 
 func _invalid_move() -> void:
@@ -639,7 +956,7 @@ func _invalid_move() -> void:
 	hint_destination = -1
 	world.release_focus()
 	world.pulse_camera(0.22)
-	hud.say(OOPS[randi() % OOPS.size()], "angry")
+	_cass(OOPS[randi() % OOPS.size()], "angry", "oops" if randi() % 2 == 0 else "nope")
 	audio.play("tap")
 	_vibrate(40)
 
@@ -664,11 +981,25 @@ func _check_match(ti: int) -> void:
 		tube.pop_back()
 	save.add_coins(2)
 	coins_earned += 2
+	save.data.total_matches = int(save.data.total_matches) + count
+	save.quest_add("match", count)
+	if combo == 3:
+		save.quest_add("combo", 1)
 	audio.play("match")
-	hud.say(CHEERS[randi() % CHEERS.size()], "happy")
+	world.cam_match(ti)
 	world.pulse_camera(0.16)
-	world.punch(1.0)
 	_vibrate(25)
+	if combo >= 3:
+		var bonus := combo
+		save.add_coins(bonus)
+		coins_earned += bonus
+		hud.show_banner("COMBO x%d!" % combo, Color("#ffb347"))
+		_cass("COMBO x%d!  +%d" % [combo, bonus], "dance", "wow")
+		audio.play("streak_up")
+	elif combo == 2:
+		_cass("Double match!", "cheer", "cheer")
+	else:
+		_cass(CHEERS[randi() % CHEERS.size()], "cheer", "yay")
 
 func _check_win_condition() -> void:
 	var complete := true
@@ -683,29 +1014,118 @@ func _check_win_condition() -> void:
 		save.set_level(current_level, stars, score)
 		save.add_coins(LEVEL_COMPLETE_COINS)
 		coins_earned += LEVEL_COMPLETE_COINS
+		var streak := save.record_win()
+		_streak_bonus = 0
+		if streak >= 2:
+			_streak_bonus = mini(5 * streak, 25)
+			save.add_coins(_streak_bonus)
+			coins_earned += _streak_bonus
+		save.quest_add("win", 1)
+		save.quest_add("stars", stars)
+		if stars == 3:
+			save.quest_add("perfect", 1)
+		if _hints_used_level == 0:
+			save.quest_add("nohint", 1)
 		platform.level_finished()
 		audio.play("victory")
-		hud.say("We did it!", "happy")
+		_cass("We did it!", "dance", "cheer")
 		world.celebrate()
 		_vibrate(60)
 		_show_result(true)
 	elif moves <= 0:
 		game_status = GameData.Status.LOST
+		save.record_loss()
 		platform.level_finished()
 		audio.play("gameover")
-		hud.say("Oh no...", "sad")
+		_cass("Oh no...", "sad", "oh_no")
 		world.defeat()
 		_show_result(false)
 
-func _hint() -> void:
+# ── Power-ups: each asks "use coins or watch a video" ────────────────────────
+
+func _open_powerup(kind: String) -> void:
 	if game_status != GameData.Status.PLAYING or hud == null:
 		return
-	var granted := save.use_hint()
-	if not granted:
-		granted = save.spend_coins(HINT_COST)
-	if not granted:
-		_toast("Need a hint or %d coins. Watch a video in the Shop!" % HINT_COST)
+	if kind == "tube" and tubes.size() >= MAX_TUBES:
+		_toast("Maximum %d tubes" % MAX_TUBES)
 		return
+	var icon_name := "bulb"
+	var accent := Color("#ffe14d")
+	var title := ""
+	var desc := ""
+	var coin_text := ""
+	var cost := 0
+	match kind:
+		"hint":
+			title = "Need a hint?"
+			desc = "Cass will point at a good move."
+			if int(save.data.hints) > 0:
+				coin_text = "Use a hint  (%d left)" % int(save.data.hints)
+			else:
+				cost = HINT_COST
+				coin_text = "Use %d coins" % cost
+		"moves":
+			icon_name = "moves"
+			accent = Ui.PINK
+			title = "Out of moves?"
+			desc = "+%d moves keep you in the game." % ProductionConfig.REWARD_EXTRA_MOVES
+			cost = EXTRA_MOVES_COST
+			coin_text = "Use %d coins" % cost
+		"tube":
+			icon_name = "tube"
+			accent = Ui.BLUE
+			title = "Add an extra tube?"
+			desc = "A fresh empty tube gives you room to sort."
+			cost = EXTRA_TUBE_COST
+			coin_text = "Use %d coins" % cost
+	var can_pay := cost <= 0 or int(save.data.coins) >= cost
+	game_status = GameData.Status.PAUSED
+	_pending_pu = kind
+	_close_modal()
+	_modal = Modals.powerup(overlay_root, icon_name, accent, title, desc, coin_text,
+		cost > 0, can_pay, platform.is_rewarded_ready(), _pu_coins, _pu_watch, _pu_cancel)
+
+func _pu_cancel() -> void:
+	_pending_pu = ""
+	_pause_resume()
+
+func _pu_coins() -> void:
+	var kind := _pending_pu
+	_pending_pu = ""
+	var ok := false
+	match kind:
+		"hint":
+			ok = save.use_hint() or save.spend_coins(HINT_COST)
+		"moves":
+			ok = save.spend_coins(EXTRA_MOVES_COST)
+		"tube":
+			ok = save.spend_coins(EXTRA_TUBE_COST)
+	_pause_resume()
+	if ok:
+		_apply_powerup(kind)
+	else:
+		_toast("Not enough coins. Watch a video instead!")
+
+func _pu_watch() -> void:
+	var kind := _pending_pu
+	if not platform.show_rewarded("pu_" + kind):
+		_pending_pu = ""
+		_pause_resume()
+		_toast("No video available right now. Try coins!")
+
+func _apply_powerup(kind: String) -> void:
+	match kind:
+		"hint":
+			_apply_hint()
+		"moves":
+			moves += ProductionConfig.REWARD_EXTRA_MOVES
+			_refresh_hud()
+			_cass("+%d moves!" % ProductionConfig.REWARD_EXTRA_MOVES, "cheer", "yay")
+		"tube":
+			_add_tube()
+
+func _apply_hint() -> void:
+	_hints_used_level += 1
 	for fi in range(tubes.size()):
 		if tubes[fi].is_empty():
 			continue
@@ -716,40 +1136,30 @@ func _hint() -> void:
 			if tubes[ti].is_empty() or tubes[ti][-1] == col:
 				selected = fi
 				hint_destination = ti
-				world.focus_on_tube(ti)
+				world.cam_hint(ti)
 				_glow_for(fi)
-				hud.say("Try the glowing tube!", "think")
+				hud.avatar.look_at_screen(world.tube_screen_pos(ti))
+				_cass("Try the glowing tube!", "point", "hmm")
 				_sync_visuals()
 				_refresh_hud()
 				return
 	_refresh_hud()
 	_toast("No simple move found. Expose another crystal.")
 
-func _extra_moves() -> void:
-	if game_status != GameData.Status.PLAYING:
+# New tubes are appended at the end of the layout; existing tubes glide to their
+# new places and the new one drops in (see BoardLayout / GameWorld.arrange).
+func _add_tube() -> void:
+	if tubes.size() >= MAX_TUBES:
+		_toast("Maximum %d tubes" % MAX_TUBES)
 		return
-	if save.spend_coins(EXTRA_MOVES_COST):
-		moves += ProductionConfig.REWARD_EXTRA_MOVES
-		_refresh_hud()
-		hud.say("+%d moves!" % ProductionConfig.REWARD_EXTRA_MOVES, "happy")
-	else:
-		_toast("You need %d coins. Earn them in the Shop!" % EXTRA_MOVES_COST)
-
-func _extra_tube() -> void:
-	if game_status != GameData.Status.PLAYING:
-		return
-	if tubes.size() >= 10:
-		_toast("Maximum 10 tubes")
-		return
-	if not save.spend_coins(EXTRA_TUBE_COST):
-		_toast("You need %d coins. Earn them in the Shop!" % EXTRA_TUBE_COST)
-		return
+	var old_positions := world.tube_positions()
 	tubes.append([])
-	world.arrange(tubes.size(), int(level_info.capacity), false)
+	world.arrange(tubes.size(), int(level_info.capacity), false, old_positions)
 	_connect_tubes()
 	_sync_visuals()
 	_refresh_hud()
-	hud.say("A fresh tube!", "happy")
+	audio.play("tube_drop")
+	_cass("A fresh tube!", "cheer", "wow")
 
 # ── Pause / tutorial ──────────────────────────────────────────────────────────
 
@@ -766,6 +1176,7 @@ func _restart_level() -> void:
 func _pause_resume() -> void:
 	if game_status == GameData.Status.PAUSED:
 		game_status = GameData.Status.PLAYING
+		_idle_time = 0.0
 
 func _show_tutorial() -> void:
 	_close_modal()
@@ -778,11 +1189,13 @@ func _close_tutorial() -> void:
 # ── Result ────────────────────────────────────────────────────────────────────
 
 func _show_result(won: bool) -> void:
-	await get_tree().create_timer(1.7 if won else 1.1).timeout
+	await get_tree().create_timer(2.0 if won else 1.2).timeout
 	var expected := GameData.Status.WON if won else GameData.Status.LOST
 	if game_status != expected:
 		return
 	_build_result(won)
+	if won:
+		_maybe_offer_chest()
 
 func _build_result(won: bool) -> void:
 	_enter(UiScreen.RESULT)
@@ -791,7 +1204,8 @@ func _build_result(won: bool) -> void:
 	_attach(s)
 	var can_watch := platform.is_rewarded_ready() and not (won and _doubled)
 	s.setup(won, stars, score, coins_earned, int(save.data.lives),
-		EXTRA_MOVES_COST, can_watch, int(save.data.coins))
+		EXTRA_MOVES_COST, can_watch, int(save.data.coins),
+		int(save.data.win_streak), _streak_bonus)
 	s.next_pressed.connect(func(): _start_after_ad(current_level + 1))
 	s.replay_pressed.connect(func(): _start_after_ad(current_level))
 	s.retry_pressed.connect(_retry_with_life)
@@ -822,31 +1236,24 @@ func _buy_extra_moves() -> void:
 # Continue a lost level with extra moves (the board is still in place).
 func _resume_with_moves(count: int) -> void:
 	if current_screen != UiScreen.RESULT or game_status != GameData.Status.LOST:
-		if game_status == GameData.Status.PLAYING:
+		if game_status == GameData.Status.PLAYING or game_status == GameData.Status.PAUSED:
 			moves += count
 			_refresh_hud()
 		return
 	moves += count
 	game_status = GameData.Status.PLAYING
 	_enter(UiScreen.GAME)
-	hud = GameHud.new()
-	_attach(hud)
-	hud.setup()
-	hud.pause_pressed.connect(show_pause)
-	hud.hint_pressed.connect(_hint)
-	hud.moves_pressed.connect(_extra_moves)
-	hud.tube_pressed.connect(_extra_tube)
-	hud.camera_pressed.connect(_next_camera)
+	_create_hud()
 	world.calm()
 	_refresh_hud()
-	hud.say("Back in the game!", "happy")
+	_cass("Back in the game!", "cheer", "yay")
 
 # ── Toast ─────────────────────────────────────────────────────────────────────
 
 func _toast(msg: String) -> void:
 	if overlay_root == null or not is_inside_tree():
 		return
-	if toast_valid():
+	if is_instance_valid(_toast_node):
 		_toast_node.queue_free()
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -865,6 +1272,3 @@ func _toast(msg: String) -> void:
 	tw.tween_interval(1.9)
 	tw.tween_property(panel, "modulate:a", 0.0, 0.35)
 	tw.tween_callback(panel.queue_free)
-
-func toast_valid() -> bool:
-	return _toast_node != null and is_instance_valid(_toast_node)

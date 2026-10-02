@@ -8,7 +8,10 @@ const DAILY_BONUS := 50
 const INT_KEYS := [
 	"coins", "hints", "lives", "last_life_time", "total_stars",
 	"highest_unlocked", "daily_bonus_time", "remove_ads_expiry",
+	"login_streak", "login_last_claim", "quest_day", "win_streak",
+	"wins_since_chest", "total_matches", "total_wins",
 ]
+const CHEST_EVERY := 3
 
 var data: Dictionary = _default_data()
 
@@ -25,6 +28,18 @@ static func _default_data() -> Dictionary:
 		"sound": true,
 		"music": true,
 		"vibration": true,
+		"voice": true,
+		"auto_camera": true,
+		"login_streak": 0,
+		"login_last_claim": -1,
+		"quest_day": -1,
+		"quest_progress": {},
+		"quest_claimed": {},
+		"milestones": [],
+		"win_streak": 0,
+		"wins_since_chest": 0,
+		"total_matches": 0,
+		"total_wins": 0,
 		"daily_bonus_time": 0,
 		"remove_ads_tier": "none",
 		"remove_ads_expiry": 0,
@@ -58,6 +73,15 @@ func load_data() -> void:
 		data.levels = {}
 	if not (data.processed_purchase_tokens is Array):
 		data.processed_purchase_tokens = []
+	if not (data.quest_progress is Dictionary):
+		data.quest_progress = {}
+	if not (data.quest_claimed is Dictionary):
+		data.quest_claimed = {}
+	var claimed: Array = []
+	if data.milestones is Array:
+		for m in data.milestones:
+			claimed.append(int(m))
+	data.milestones = claimed
 
 # Atomic save: write a temp file, then rename over the real one. A crash or
 # kill mid-write can no longer leave a half-written save (= lost progress and
@@ -114,6 +138,93 @@ func seconds_to_daily_bonus() -> int:
 
 func ads_seconds_left() -> int:
 	return maxi(0, int(data.remove_ads_expiry) - int(Time.get_unix_time_from_system()))
+
+# ── retention: daily login, quests, milestones, streaks, chest ───────────────
+
+func today() -> int:
+	return int(Time.get_unix_time_from_system() / 86400.0)
+
+func seconds_to_next_day() -> int:
+	return 86400 - (int(Time.get_unix_time_from_system()) % 86400)
+
+func login_available() -> bool:
+	return int(data.login_last_claim) != today()
+
+# Streak day (1..7) the player is on if they claim now.
+func login_day_if_claimed() -> int:
+	var t := today()
+	var last := int(data.login_last_claim)
+	var streak := int(data.login_streak)
+	if last == t:
+		return streak
+	if last == t - 1:
+		return (streak % 7) + 1
+	return 1
+
+# Returns the streak day that was claimed (0 if already claimed today).
+func claim_login() -> int:
+	if not login_available():
+		return 0
+	var day := login_day_if_claimed()
+	data.login_streak = day
+	data.login_last_claim = today()
+	save()
+	return day
+
+func ensure_quests() -> void:
+	var t := today()
+	if int(data.quest_day) != t:
+		data.quest_day = t
+		data.quest_progress = {}
+		data.quest_claimed = {}
+		save()
+
+func quest_add(id: String, amount: int) -> void:
+	ensure_quests()
+	var prog: Dictionary = data.quest_progress
+	prog[id] = int(prog.get(id, 0)) + amount
+	data.quest_progress = prog
+	save()
+
+func quest_progress_of(id: String) -> int:
+	ensure_quests()
+	return int(data.quest_progress.get(id, 0))
+
+func quest_is_claimed(id: String) -> bool:
+	ensure_quests()
+	return bool(data.quest_claimed.get(id, false))
+
+func quest_mark_claimed(id: String) -> void:
+	var cl: Dictionary = data.quest_claimed
+	cl[id] = true
+	data.quest_claimed = cl
+	save()
+
+func milestone_is_claimed(stars: int) -> bool:
+	return stars in data.milestones
+
+func milestone_mark_claimed(stars: int) -> void:
+	if not milestone_is_claimed(stars):
+		data.milestones.append(stars)
+		save()
+
+func record_win() -> int:
+	data.win_streak = int(data.win_streak) + 1
+	data.wins_since_chest = int(data.wins_since_chest) + 1
+	data.total_wins = int(data.total_wins) + 1
+	save()
+	return int(data.win_streak)
+
+func record_loss() -> void:
+	data.win_streak = 0
+	save()
+
+func chest_ready() -> bool:
+	return int(data.wins_since_chest) >= CHEST_EVERY
+
+func chest_opened() -> void:
+	data.wins_since_chest = 0
+	save()
 
 func level(id: int) -> Dictionary:
 	return data.levels.get(str(id), {})

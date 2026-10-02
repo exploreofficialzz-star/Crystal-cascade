@@ -41,6 +41,7 @@ func setup(save_data: SaveData) -> void:
 	var total := maxi(100, highest + 16)
 	for id in range(1, total + 1):
 		grid.add_child(_card(id, highest))
+	Ui.scroll_friendly(grid)
 	_scroll_to_current()
 
 # Keeps the grid clear of the native banner ad.

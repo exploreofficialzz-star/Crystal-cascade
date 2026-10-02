@@ -5,9 +5,11 @@ signal pause_pressed
 signal hint_pressed
 signal moves_pressed
 signal tube_pressed
-signal camera_pressed
+signal voice_requested(kind: String)
+signal avatar_poked
 
-const AVATAR_SIZE := 264
+const AVATAR_W := 300
+const AVATAR_H := 414
 
 var avatar: AvatarPortrait
 var _level_label: Label
@@ -36,7 +38,7 @@ func setup() -> void:
 	left.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	left.offset_left = 40
 	left.offset_top = 36 + Ui.inset_top
-	left.offset_right = 40 + 700
+	left.offset_right = 40 + 680
 	left.offset_bottom = left.offset_top + 10
 	left.add_theme_constant_override("separation", 18)
 	left.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -46,7 +48,7 @@ func setup() -> void:
 	head.add_theme_constant_override("separation", 22)
 	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var pause := Ui.circle_button("pause", 108)
-	pause.pressed.connect(func(): pause_pressed.emit())
+	pause.pressed.connect(_emit_pause)
 	head.add_child(pause)
 	_level_label = Ui.label("LEVEL 1", 56, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, true)
 	_level_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.7))
@@ -66,32 +68,34 @@ func setup() -> void:
 	chips.add_child(_coin_chip)
 	left.add_child(chips)
 
-	# top-right: the Guardian's portrait and speech bubble
+	# right edge: Cass, full body
 	avatar = AvatarPortrait.new()
-	avatar.custom_minimum_size = Vector2(AVATAR_SIZE, AVATAR_SIZE)
+	avatar.custom_minimum_size = Vector2(AVATAR_W, AVATAR_H)
 	avatar.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	avatar.offset_right = -36
-	avatar.offset_left = -36 - AVATAR_SIZE
-	avatar.offset_top = 30 + Ui.inset_top
-	avatar.offset_bottom = avatar.offset_top + AVATAR_SIZE
+	avatar.offset_right = -24
+	avatar.offset_left = -24 - AVATAR_W
+	avatar.offset_top = 14 + Ui.inset_top
+	avatar.offset_bottom = avatar.offset_top + AVATAR_H
 	add_child(avatar)
+	avatar.poked.connect(_emit_poked)
 
+	# speech bubble, left of Cass and below the stat chips
 	_bubble = PanelContainer.new()
 	_bubble.add_theme_stylebox_override("panel", Ui.flat(Color("#f4f1ff"), 30, Color("#7ef0ff"), 3, 24, 14))
 	_bubble.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_bubble.offset_right = -36
-	_bubble.offset_left = -36 - 420
-	_bubble.offset_top = avatar.offset_bottom + 8
+	_bubble.offset_right = -(24 + AVATAR_W + 6)
+	_bubble.offset_left = _bubble.offset_right - 380
+	_bubble.offset_top = 262 + Ui.inset_top
 	_bubble.offset_bottom = _bubble.offset_top + 10
 	_bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bubble.modulate = Color(1, 1, 1, 0)
 	_bubble_label = Ui.label("", 32, Color("#241b63"), HORIZONTAL_ALIGNMENT_CENTER, true)
 	_bubble_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_bubble_label.custom_minimum_size = Vector2(340, 0)
+	_bubble_label.custom_minimum_size = Vector2(320, 0)
 	_bubble.add_child(_bubble_label)
 	add_child(_bubble)
 
-	# centre: level banner
+	# centre: level / combo banner
 	_banner = Ui.label("", 96, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true)
 	_banner.add_theme_color_override("font_outline_color", Color(0.1, 0.05, 0.3, 0.9))
 	_banner.add_theme_constant_override("outline_size", 14)
@@ -103,7 +107,7 @@ func setup() -> void:
 	_banner.modulate = Color(1, 1, 1, 0)
 	add_child(_banner)
 
-	# bottom action bar
+	# bottom action bar: each button opens a "use coins or watch a video" choice
 	var bar_m := MarginContainer.new()
 	bar_m.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	bar_m.offset_top = -260
@@ -120,10 +124,12 @@ func setup() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
 	bar.add_child(row)
-	row.add_child(_action("bulb", "HINT", "", Color("#ffe14d"), _emit_hint, true))
+	row.add_child(_action("bulb", "HINT", "40", Color("#ffe14d"), _emit_hint, true))
 	row.add_child(_action("moves", "+%d MOVES" % ProductionConfig.REWARD_EXTRA_MOVES, "30", Ui.PINK, _emit_moves))
 	row.add_child(_action("tube", "+TUBE", "100", Ui.BLUE, _emit_tube))
-	row.add_child(_action("camera", "CAMERA", "", Ui.GREEN, _emit_camera))
+
+func _emit_pause() -> void:
+	pause_pressed.emit()
 
 func _emit_hint() -> void:
 	hint_pressed.emit()
@@ -134,8 +140,8 @@ func _emit_moves() -> void:
 func _emit_tube() -> void:
 	tube_pressed.emit()
 
-func _emit_camera() -> void:
-	camera_pressed.emit()
+func _emit_poked() -> void:
+	avatar_poked.emit()
 
 func _action(icon_name: String, text: String, cost: String, accent: Color, action: Callable, with_badge: bool = false) -> Control:
 	var b := Button.new()
@@ -151,14 +157,15 @@ func _action(icon_name: String, text: String, cost: String, accent: Color, actio
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
 	v.add_theme_constant_override("separation", 4)
 	v.add_child(Ui.icon(icon_name, 62, accent))
-	v.add_child(Ui.label(text, 24, Ui.TEXT, HORIZONTAL_ALIGNMENT_CENTER, true))
-	if cost != "":
-		var cr := HBoxContainer.new()
-		cr.alignment = BoxContainer.ALIGNMENT_CENTER
-		cr.add_theme_constant_override("separation", 6)
-		cr.add_child(Ui.icon("coin", 24, Ui.GOLD))
-		cr.add_child(Ui.label(cost, 24, Ui.GOLD, HORIZONTAL_ALIGNMENT_CENTER, true))
-		v.add_child(cr)
+	v.add_child(Ui.label(text, 26, Ui.TEXT, HORIZONTAL_ALIGNMENT_CENTER, true))
+	var cr := HBoxContainer.new()
+	cr.alignment = BoxContainer.ALIGNMENT_CENTER
+	cr.add_theme_constant_override("separation", 6)
+	cr.add_child(Ui.icon("coin", 24, Ui.GOLD))
+	cr.add_child(Ui.label(cost, 24, Ui.GOLD, HORIZONTAL_ALIGNMENT_CENTER, true))
+	cr.add_child(Ui.label("or", 22, Ui.TEXT_DIM))
+	cr.add_child(Ui.icon("video", 26, Color(0.9, 0.5, 1.0)))
+	v.add_child(cr)
 	b.add_child(v)
 	Ui.ignore_mouse(v)
 	if with_badge:
@@ -186,11 +193,14 @@ func update_stats(level: int, moves: int, score: int, coins: int, hints: int) ->
 	if _hint_badge != null:
 		_hint_badge.text = str(hints)
 
-func say(text: String, mood: String = "") -> void:
+# Cass says something: speech bubble, body/face reaction, optional voice line.
+func say(text: String, mood: String = "", voice: String = "") -> void:
 	if _bubble == null:
 		return
 	if mood != "" and avatar != null:
 		avatar.react(mood)
+	if voice != "":
+		voice_requested.emit(voice)
 	_bubble_label.text = text
 	if _bubble_tween != null and _bubble_tween.is_valid():
 		_bubble_tween.kill()
@@ -200,10 +210,11 @@ func say(text: String, mood: String = "") -> void:
 	_bubble_tween.tween_interval(1.9)
 	_bubble_tween.tween_property(_bubble, "modulate:a", 0.0, 0.35)
 
-func show_banner(title: String) -> void:
+func show_banner(title: String, color: Color = Color.WHITE) -> void:
 	if _banner == null:
 		return
 	_banner.text = title
+	_banner.add_theme_color_override("font_color", color)
 	_banner.pivot_offset = Vector2(500, 75)
 	_banner.scale = Vector2(0.6, 0.6)
 	_banner.modulate = Color(1, 1, 1, 0)

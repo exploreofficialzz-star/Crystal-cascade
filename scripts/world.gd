@@ -184,30 +184,49 @@ func set_board_visible(value: bool) -> void:
 
 # Removed tubes leave the tree immediately (counts and indices stay correct) but
 # are freed with queue_free(); freeing a node inside its own signal callback is
-# a use-after-free.
-func arrange(tube_count: int, capacity: int, intro: bool = true) -> void:
+# a use-after-free. `old_positions` (extra-tube case) makes existing tubes glide
+# to their new places and the new tube drop in.
+func arrange(tube_count: int, capacity: int, intro: bool = true, old_positions: Array = []) -> void:
 	for child in tubes_root.get_children():
 		tubes_root.remove_child(child)
 		child.queue_free()
 	if tube_count <= 0:
 		return
-	var cols: int = mini(4, tube_count)
-	var rows: int = int(ceil(float(tube_count) / float(cols)))
+	var layout := BoardLayout.compute(tube_count)
+	var pos: Array = layout["pos"]
+	var rows: int = int(layout["rows"])
+	var base_y: float = capacity * 0.45 - 0.1
 	for i in range(tube_count):
-		var row: int = i / cols
-		var col: int = i % cols
-		var x: float = (float(col) - float(cols - 1) / 2.0) * SPACING_X
-		var z: float = (float(row) - float(rows - 1) / 2.0) * SPACING_Z
+		var p: Vector3 = pos[i]
+		var target := Vector3(p.x, base_y + p.y, p.z)
 		var tube := Tube3D.new()
 		tube.setup(i, capacity)
-		tube.position = Vector3(x, capacity * 0.45 - 0.1, z)
+		tube.position = target
 		tubes_root.add_child(tube)
-	table.build(tube_count, cols, rows, SPACING_X, SPACING_Z)
-	var height: float = maxf(4.9, float(capacity) * 0.9)
-	var half_w: float = float(cols - 1) * SPACING_X * 0.5 + 1.0
-	director.configure(capacity * 0.45 - 0.1, half_w, height)
+		if old_positions.size() > 0:
+			if i < old_positions.size():
+				var from: Vector3 = old_positions[i]
+				tube.position = from
+				tube.slide_to(target)
+			else:
+				tube.play_spawn(0.25, true)
+				tube.pulse_highlight(1.8)
+		elif intro:
+			tube.play_spawn(0.1 * float(i), false)
+	table.build(layout)
+	var height: float = maxf(4.9, float(capacity) * 0.9) + (BoardLayout.RISER if rows > 1 else 0.0)
+	var center_y: float = base_y + (BoardLayout.RISER * 0.5 if rows > 1 else 0.0)
+	director.configure(center_y, float(layout["half_w"]), height, rows, old_positions.size() == 0)
 	if intro:
 		director.play_intro()
+	elif old_positions.size() > 0:
+		cam_new_tube(tube_count - 1)
+
+func tube_positions() -> Array:
+	var out: Array = []
+	for child in tubes_root.get_children():
+		out.append((child as Node3D).position)
+	return out
 
 func get_tube(index: int) -> Tube3D:
 	if tubes_root == null:
@@ -216,24 +235,44 @@ func get_tube(index: int) -> Tube3D:
 		return tubes_root.get_child(index) as Tube3D
 	return null
 
-func focus_on_tube(index: int) -> void:
+func _tube_point(index: int) -> Vector3:
 	var tube := get_tube(index)
-	if tube != null and director != null:
-		director.focus_on(tube.global_position)
+	if tube == null:
+		return Vector3.ZERO
+	return tube.global_position
+
+func focus_on_tube(index: int) -> void:
+	if director != null:
+		director.on_select(_tube_point(index))
 
 func release_focus() -> void:
+	pass
+
+func cam_move(from_index: int, to_index: int) -> void:
 	if director != null:
-		director.release_focus()
+		director.on_move(_tube_point(from_index), _tube_point(to_index))
+
+func cam_match(index: int) -> void:
+	if director != null:
+		director.on_match(_tube_point(index))
+
+func cam_new_tube(index: int) -> void:
+	if director != null:
+		director.on_new_tube(_tube_point(index))
+
+func cam_hint(index: int) -> void:
+	if director != null:
+		director.on_hint(_tube_point(index))
+
+func set_auto_camera(value: bool) -> void:
+	if director != null:
+		director.set_auto(value)
 
 func tube_screen_pos(index: int) -> Vector2:
 	var tube := get_tube(index)
 	if tube == null or camera == null:
 		return Vector2.ZERO
 	return camera.unproject_position(tube.global_position)
-
-func next_camera() -> void:
-	if director != null:
-		director.next_mode()
 
 func pulse_camera(intensity: float = 0.18) -> void:
 	if director != null:

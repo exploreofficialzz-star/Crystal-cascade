@@ -3,8 +3,8 @@ extends RefCounted
 
 const APP_NAME := "Crystal Cascade"
 const PACKAGE_NAME := "com.chastechgroup.crystalcascade"
-const VERSION_NAME := "2.6.0"
-const VERSION_CODE := 22
+const VERSION_NAME := "2.7.0"
+const VERSION_CODE := 23
 
 # false = Google's public TEST ad units (safe to tap while testing).
 # CI flips this to true automatically for the Play Store bundle (AAB) only.
@@ -24,13 +24,13 @@ const ADMOB_REWARDED := "ca-app-pub-2492078126313994/4998635250"
 const ADMOB_NATIVE := "ca-app-pub-2492078126313994/7665766435"
 
 const PRODUCT_IDS := [
-    "remove_ads_day", "remove_ads_weekend", "remove_ads_month",
-    "hint_pack_small", "hint_pack_large", "coin_pack_starter", "mega_pack"
+	"remove_ads_day", "remove_ads_weekend", "remove_ads_month",
+	"hint_pack_small", "hint_pack_large", "coin_pack_starter", "mega_pack"
 ]
 
 const CONSUMABLE_PRODUCT_IDS := [
-    "remove_ads_day", "remove_ads_weekend", "remove_ads_month",
-    "hint_pack_small", "hint_pack_large", "coin_pack_starter", "mega_pack"
+	"remove_ads_day", "remove_ads_weekend", "remove_ads_month",
+	"hint_pack_small", "hint_pack_large", "coin_pack_starter", "mega_pack"
 ]
 
 static func banner_id() -> String:

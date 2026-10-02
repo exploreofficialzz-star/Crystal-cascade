@@ -5,6 +5,8 @@ signal back_pressed
 signal sound_toggled(value: bool)
 signal music_toggled(value: bool)
 signal vibration_toggled(value: bool)
+signal voice_toggled(value: bool)
+signal auto_camera_toggled(value: bool)
 signal restore_pressed
 signal reset_pressed
 signal privacy_pressed
@@ -41,6 +43,10 @@ func setup(save_data: SaveData) -> void:
 	list.add_child(_toggle("sound", "Sound Effects", bool(save.data.sound), func(v): sound_toggled.emit(v)))
 	list.add_child(_toggle("music", "Music", bool(save.data.music), func(v): music_toggled.emit(v)))
 	list.add_child(_toggle("vibrate", "Vibration", bool(save.data.vibration), func(v): vibration_toggled.emit(v)))
+	list.add_child(_toggle("sound", "Cass's Voice", bool(save.data.voice), func(v): voice_toggled.emit(v)))
+
+	list.add_child(Ui.section_title("Gameplay"))
+	list.add_child(_toggle("camera", "Auto Camera", bool(save.data.auto_camera), func(v): auto_camera_toggled.emit(v)))
 
 	list.add_child(Ui.section_title("Account"))
 	list.add_child(_nav("restore", "Restore Purchases", Ui.TEXT, func(): restore_pressed.emit()))
@@ -55,6 +61,7 @@ func setup(save_data: SaveData) -> void:
 	list.add_child(_info("Developer", "chAs"))
 	list.add_child(_info("Package", ProductionConfig.PACKAGE_NAME))
 	list.add_child(Ui.vspace(40))
+	Ui.scroll_friendly(list)
 
 func _on_version_tapped() -> void:
 	_version_taps += 1

@@ -1,15 +1,24 @@
 class_name ShopScreen
 extends Control
 
+# The whole screen is one scroll list (drag from anywhere, cards included), the
+# back button floats on top. No banner ad on this screen.
 signal back_pressed
 signal purchase_requested(product_id: String)
 signal watch_coins_requested
 signal watch_hint_requested
+signal watch_life_requested
 signal bonus_requested
+signal rewards_requested
+signal coins_for_hints_requested
+signal coins_for_lives_requested
+
+const HINT_BUNDLE_COST := 100
+const HINT_BUNDLE_COUNT := 3
+const LIFE_REFILL_COST := 60
 
 var save: SaveData
 var prices: Dictionary = {}
-var _pad: MarginContainer
 var _scroll: ScrollContainer
 
 func setup(save_data: SaveData, price_map: Dictionary) -> void:
@@ -22,41 +31,63 @@ func setup(save_data: SaveData, price_map: Dictionary) -> void:
 	Ui.full_rect(bg)
 	add_child(bg)
 
-	_pad = Ui.margin(self, 40, 36 + int(Ui.inset_top), 40, 0 + int(Ui.inset_bottom))
-	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", 22)
-	_pad.add_child(outer)
-	var back := Ui.header(outer, "Shop")
-	back.pressed.connect(func(): back_pressed.emit())
-
-	var scroll := ScrollContainer.new()
-	_scroll = scroll
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	outer.add_child(scroll)
+	_scroll = ScrollContainer.new()
+	Ui.full_rect(_scroll)
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	add_child(_scroll)
+	var m := MarginContainer.new()
+	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	m.add_theme_constant_override("margin_left", 40)
+	m.add_theme_constant_override("margin_right", 40)
+	m.add_theme_constant_override("margin_top", 36 + int(Ui.inset_top))
+	m.add_theme_constant_override("margin_bottom", 90 + int(Ui.inset_bottom))
+	_scroll.add_child(m)
 	var list := VBoxContainer.new()
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	list.add_theme_constant_override("separation", 18)
-	scroll.add_child(list)
+	m.add_child(list)
+
+	# title row (the floating back button sits over the left gap)
+	var head := HBoxContainer.new()
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(138, 0)
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(gap)
+	var title := Ui.label("Shop", 54, Ui.TEXT, HORIZONTAL_ALIGNMENT_LEFT, true)
+	title.custom_minimum_size = Vector2(0, 112)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	list.add_child(head)
 
 	list.add_child(_wallet())
 	if save.ads_seconds_left() > 0:
 		list.add_child(_ads_off_card())
 
+	var dot := Rewards.claimable(save)
+	list.add_child(_item("gift", Ui.GREEN, "Daily Rewards & Quests",
+		"Login streak, daily quests and star milestones", "", _emit_rewards, "CLAIM!" if dot else ""))
+
 	list.add_child(Ui.section_title("Free Coins"))
 	list.add_child(_item("video", Ui.PURPLE, "Watch Video",
-		"Get %d coins free" % ProductionConfig.REWARD_VIDEO_COINS, "", func(): watch_coins_requested.emit()))
+		"Get %d coins free" % ProductionConfig.REWARD_VIDEO_COINS, "", _emit_watch_coins))
 	var wait := save.seconds_to_daily_bonus()
 	if wait <= 0:
 		list.add_child(_item("gift", Ui.GREEN, "Daily Bonus",
-			"Claim your %d-coin daily reward" % SaveData.DAILY_BONUS, "", func(): bonus_requested.emit()))
+			"Claim your %d-coin daily reward" % SaveData.DAILY_BONUS, "", _emit_bonus))
 	else:
 		list.add_child(_item("gift", Ui.GREY, "Daily Bonus",
 			"Next reward in %s" % Ui.format_duration(wait), "", Callable(), "", false))
 
+	list.add_child(Ui.section_title("Lives  (you have %d / 5)" % int(save.data.lives)))
+	list.add_child(_item("video", Ui.RED, "Watch Video", "Get 1 free life", "", _emit_watch_life))
+	list.add_child(_item("heart", Ui.RED, "Refill All Lives", "Back to 5 lives right away",
+		"%d" % LIFE_REFILL_COST, _emit_coins_lives, "", int(save.data.lives) < 5, true))
+
 	list.add_child(Ui.section_title("Hints  (you have %d)" % int(save.data.hints)))
 	list.add_child(_item("video", Color("#ffe14d"), "Watch Video",
-		"Get %d free hint" % ProductionConfig.REWARD_VIDEO_HINTS, "", func(): watch_hint_requested.emit()))
+		"Get %d free hint" % ProductionConfig.REWARD_VIDEO_HINTS, "", _emit_watch_hint))
+	list.add_child(_item("bulb", Color("#ffe14d"), "%d Hints" % HINT_BUNDLE_COUNT, "Pay with coins",
+		"%d" % HINT_BUNDLE_COST, _emit_coins_hints, "", true, true))
 	list.add_child(_product("bulb", Ui.GOLD, "Hint Pack — Small", "5 hints, ready when you need them", "hint_pack_small"))
 	list.add_child(_product("bulb", Ui.GOLD, "Hint Pack — Large", "15 hints · best value", "hint_pack_large", "BEST VALUE"))
 
@@ -68,7 +99,17 @@ func setup(save_data: SaveData, price_map: Dictionary) -> void:
 	list.add_child(Ui.section_title("Coin Packs"))
 	list.add_child(_product("coin", Ui.GOLD, "Coin Pack", "500 coins + 5 hints", "coin_pack_starter"))
 	list.add_child(_product("diamond", Ui.BLUE, "Mega Pack", "2 000 coins + 20 hints + 48 h No Ads", "mega_pack", "POPULAR"))
-	list.add_child(Ui.vspace(40))
+	list.add_child(Ui.vspace(30))
+	Ui.scroll_friendly(list)
+
+	var back := Ui.circle_button("back", 112)
+	back.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	back.offset_left = 40
+	back.offset_top = 36 + Ui.inset_top
+	back.offset_right = 40 + 112
+	back.offset_bottom = back.offset_top + 112
+	back.pressed.connect(func(): back_pressed.emit())
+	add_child(back)
 
 func get_scroll() -> int:
 	return _scroll.scroll_vertical if _scroll != null else 0
@@ -77,9 +118,29 @@ func set_scroll(v: int) -> void:
 	if _scroll != null:
 		_scroll.scroll_vertical = v
 
-func set_bottom_reserve(px: int) -> void:
-	if _pad != null:
-		_pad.add_theme_constant_override("margin_bottom", int(Ui.inset_bottom) + px)
+func _emit_rewards() -> void:
+	rewards_requested.emit()
+
+func _emit_watch_coins() -> void:
+	watch_coins_requested.emit()
+
+func _emit_watch_hint() -> void:
+	watch_hint_requested.emit()
+
+func _emit_watch_life() -> void:
+	watch_life_requested.emit()
+
+func _emit_bonus() -> void:
+	bonus_requested.emit()
+
+func _emit_coins_hints() -> void:
+	coins_for_hints_requested.emit()
+
+func _emit_coins_lives() -> void:
+	coins_for_lives_requested.emit()
+
+func _on_product(product_id: String) -> void:
+	purchase_requested.emit(product_id)
 
 func _price(product_id: String) -> String:
 	if prices.has(product_id):
@@ -88,8 +149,8 @@ func _price(product_id: String) -> String:
 
 func _product(icon_name: String, accent: Color, title: String, subtitle: String,
 		product_id: String, badge: String = "") -> Control:
-	var act := func(): purchase_requested.emit(product_id)
-	return _item(icon_name, accent, title, subtitle, _price(product_id), act, badge)
+	return _item(icon_name, accent, title, subtitle, _price(product_id),
+		_on_product.bind(product_id), badge)
 
 func _wallet() -> Control:
 	var card := Ui.card(Color(0.30, 0.25, 0.10, 0.35), Color(Ui.GOLD, 0.45), 34, 26)
@@ -132,8 +193,9 @@ func _ads_off_card() -> Control:
 	row.add_child(l)
 	return card
 
+# price_is_coins: the right-hand pill shows a coin icon and the price in coins.
 func _item(icon_name: String, accent: Color, title: String, subtitle: String, price: String,
-		action: Callable, badge: String = "", enabled: bool = true) -> Control:
+		action: Callable, badge: String = "", enabled: bool = true, price_is_coins: bool = false) -> Control:
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", Ui.flat(Color(accent, 0.13), 32, Color(accent, 0.55), 2, 22, 20))
 	var row := HBoxContainer.new()
@@ -154,8 +216,7 @@ func _item(icon_name: String, accent: Color, title: String, subtitle: String, pr
 	text.add_theme_constant_override("separation", 4)
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 12)
-	var t := Ui.label(title, 36, Ui.TEXT, HORIZONTAL_ALIGNMENT_LEFT, true)
-	head.add_child(t)
+	head.add_child(Ui.label(title, 36, Ui.TEXT, HORIZONTAL_ALIGNMENT_LEFT, true))
 	if badge != "":
 		var chip := PanelContainer.new()
 		chip.add_theme_stylebox_override("panel", Ui.flat(Color(accent, 0.28), 24, Color(0, 0, 0, 0), 0, 14, 4))
@@ -171,9 +232,14 @@ func _item(icon_name: String, accent: Color, title: String, subtitle: String, pr
 
 	if price != "":
 		var pill := PanelContainer.new()
-		pill.add_theme_stylebox_override("panel", Ui.flat(Color(accent, 0.24), 44, Color(0, 0, 0, 0), 0, 30, 16))
+		pill.add_theme_stylebox_override("panel", Ui.flat(Color(accent, 0.24), 44, Color(0, 0, 0, 0), 0, 26, 16))
 		pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		pill.add_child(Ui.label(price, 34, accent, HORIZONTAL_ALIGNMENT_CENTER, true))
+		var prow := HBoxContainer.new()
+		prow.add_theme_constant_override("separation", 10)
+		if price_is_coins:
+			prow.add_child(Ui.icon("coin", 36, Ui.GOLD))
+		prow.add_child(Ui.label(price, 34, accent, HORIZONTAL_ALIGNMENT_CENTER, true))
+		pill.add_child(prow)
 		row.add_child(pill)
 	elif enabled:
 		var chev := Ui.icon("chevron_right", 44, accent)

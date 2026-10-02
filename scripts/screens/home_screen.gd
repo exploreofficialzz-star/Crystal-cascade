@@ -6,6 +6,7 @@ signal levels_pressed
 signal shop_pressed
 signal settings_pressed
 signal share_pressed
+signal rewards_pressed
 
 var save: SaveData
 var _coin_chip: Control
@@ -82,6 +83,16 @@ func setup(save_data: SaveData) -> void:
 	var settings := Ui.circle_button("gear", 128)
 	settings.pressed.connect(func(): settings_pressed.emit())
 	bottom.add_child(settings)
+	bottom.add_child(Ui.vspace(1))
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(18, 0)
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bottom.add_child(gap)
+	var rewards := Ui.circle_button("gift", 128, Ui.GOLD)
+	rewards.pressed.connect(func(): rewards_pressed.emit())
+	if Rewards.claimable(save):
+		rewards.add_child(_badge_dot(true))
+	bottom.add_child(rewards)
 	bottom.add_child(Ui.hspace_expand())
 	var stars := Ui.chip("star", str(int(save.data.total_stars)), Ui.GOLD, 40)
 	bottom.add_child(stars)
@@ -99,14 +110,14 @@ func _lives_text() -> String:
 		t += "  %s" % Ui.format_duration(wait)
 	return t
 
-func _badge_dot() -> Control:
+func _badge_dot(on_circle: bool = false) -> Control:
 	var dot := Panel.new()
 	dot.add_theme_stylebox_override("panel", Ui.flat(Ui.RED, 40, Color.WHITE, 3, 0, 0))
 	dot.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	dot.offset_left = -70
-	dot.offset_right = -34
-	dot.offset_top = 22
-	dot.offset_bottom = 58
+	dot.offset_left = -40 if on_circle else -70
+	dot.offset_right = -6 if on_circle else -34
+	dot.offset_top = 4 if on_circle else 22
+	dot.offset_bottom = 38 if on_circle else 58
 	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return dot
 

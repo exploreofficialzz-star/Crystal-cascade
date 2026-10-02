@@ -130,3 +130,100 @@ static func no_lives(parent: Control, wait_text: String, rewarded_ready: bool,
 	close.pressed.connect(_wrap(ov, on_close))
 	box.add_child(close)
 	return ov
+
+# "Use coins or watch a video" choice for HINT / +MOVES / +TUBE.
+static func powerup(parent: Control, icon_name: String, accent: Color, title: String, desc: String,
+		coin_text: String, coin_costs: bool, coin_enabled: bool, watch_enabled: bool,
+		on_coins: Callable, on_watch: Callable, on_cancel: Callable) -> Control:
+	var ov := _base(parent, 0.82)
+	var box := _box(ov)
+	var badge := PanelContainer.new()
+	badge.custom_minimum_size = Vector2(150, 150)
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	badge.add_theme_stylebox_override("panel", Ui.flat(Color(accent, 0.25), 80, Color(accent, 0.6), 3, 0, 0))
+	var cc := CenterContainer.new()
+	badge.add_child(cc)
+	cc.add_child(Ui.icon(icon_name, 84, accent))
+	box.add_child(badge)
+	box.add_child(Ui.label(title, 56, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(_text(desc))
+	var coins := Ui.pill_button(coin_text, "gold", 128, 38, "coin" if coin_costs else "bulb")
+	coins.disabled = not coin_enabled
+	coins.pressed.connect(_wrap(ov, on_coins))
+	box.add_child(coins)
+	if not coin_enabled:
+		box.add_child(Ui.label("Not enough coins", 28, Ui.RED))
+	var watch := Ui.pill_button("WATCH VIDEO  ·  FREE" if watch_enabled else "Video not ready", "pink", 128, 38, "video")
+	watch.disabled = not watch_enabled
+	watch.pressed.connect(_wrap(ov, on_watch))
+	box.add_child(watch)
+	var cancel := Ui.glass_button("Cancel", Ui.GREY, 108, 34)
+	cancel.pressed.connect(_wrap(ov, on_cancel))
+	box.add_child(cancel)
+	return ov
+
+# Daily login popup shown at launch.
+static func daily_login(parent: Control, day: int, reward_text: String, reward_icon: String,
+		can_double: bool, on_claim: Callable, on_double: Callable) -> Control:
+	var ov := _base(parent, 0.84)
+	var box := _box(ov)
+	var flame := Ui.icon("flame", 130, Color("#ffb347"))
+	flame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(flame)
+	box.add_child(Ui.label("DAY %d  ·  DAILY REWARD" % day, 48, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
+	var dots := HBoxContainer.new()
+	dots.alignment = BoxContainer.ALIGNMENT_CENTER
+	dots.add_theme_constant_override("separation", 14)
+	for i in range(1, 8):
+		var d := Panel.new()
+		d.custom_minimum_size = Vector2(34, 34)
+		var on := i <= day
+		d.add_theme_stylebox_override("panel", Ui.flat(Ui.GOLD if on else Color(1, 1, 1, 0.14), 40, Color(0, 0, 0, 0), 0, 0, 0))
+		d.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dots.add_child(d)
+	box.add_child(dots)
+	var rw := HBoxContainer.new()
+	rw.alignment = BoxContainer.ALIGNMENT_CENTER
+	rw.add_theme_constant_override("separation", 16)
+	rw.add_child(Ui.icon(reward_icon, 64, Ui.GOLD))
+	rw.add_child(Ui.label(reward_text, 56, Ui.GOLD, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(rw)
+	var claim := Ui.pill_button("CLAIM", "pink", 132, 44, "gift")
+	claim.pressed.connect(_wrap(ov, on_claim))
+	box.add_child(claim)
+	if can_double:
+		var dbl := Ui.pill_button("WATCH VIDEO: DOUBLE IT", "gold", 120, 34, "video")
+		dbl.pressed.connect(_wrap(ov, on_double))
+		box.add_child(dbl)
+	return ov
+
+# Treasure chest after every third win.
+static func chest(parent: Control, reward_text: String, reward_icon: String,
+		can_double: bool, on_collect: Callable, on_double: Callable) -> Control:
+	var ov := _base(parent, 0.84)
+	var box := _box(ov)
+	var hero := Ui.icon("chest", 170, Color("#ffcf5a"))
+	hero.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	hero.pivot_offset = Vector2(85, 85)
+	box.add_child(hero)
+	var tw := hero.create_tween()
+	tw.set_loops(3)
+	tw.tween_property(hero, "rotation", 0.12, 0.09)
+	tw.tween_property(hero, "rotation", -0.12, 0.18)
+	tw.tween_property(hero, "rotation", 0.0, 0.09)
+	box.add_child(Ui.label("TREASURE CHEST!", 56, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(_text("You cleared 3 levels. Here is your prize:"))
+	var rw := HBoxContainer.new()
+	rw.alignment = BoxContainer.ALIGNMENT_CENTER
+	rw.add_theme_constant_override("separation", 16)
+	rw.add_child(Ui.icon(reward_icon, 64, Ui.GOLD))
+	rw.add_child(Ui.label(reward_text, 56, Ui.GOLD, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(rw)
+	var collect := Ui.pill_button("COLLECT", "pink", 132, 44, "check")
+	collect.pressed.connect(_wrap(ov, on_collect))
+	box.add_child(collect)
+	if can_double:
+		var dbl := Ui.pill_button("WATCH VIDEO: DOUBLE IT", "gold", 120, 34, "video")
+		dbl.pressed.connect(_wrap(ov, on_double))
+		box.add_child(dbl)
+	return ov

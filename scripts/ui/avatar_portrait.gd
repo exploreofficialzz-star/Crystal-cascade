@@ -1,31 +1,46 @@
 class_name AvatarPortrait
 extends Control
 
-# Circular HUD portrait of the 3D Guardian. It renders the character in its own
-# small SubViewport (own World3D, transparent background) so camera movement in
-# the main scene never affects it, and it stays crisp in the top-right corner.
+# Cass, full body, standing at the right edge of the game screen. She is drawn in
+# her own small SubViewport (own World3D, transparent background) so camera
+# movement in the main scene never affects her. Tap her upper body to make her
+# wave; only that area takes input, so she never blocks the tubes below.
 
-const VIEW_SIZE := 320
-const MASK_SHADER := "shader_type canvas_item;\nvoid fragment() {\n\tvec4 c = texture(TEXTURE, UV);\n\tfloat d = distance(UV, vec2(0.5));\n\tfloat a = 1.0 - smoothstep(0.485, 0.5, d);\n\tCOLOR = vec4(c.rgb, c.a * a);\n}\n"
+signal poked
+
+const VIEW := Vector2i(340, 470)
 
 var guardian: Guardian3D
 var _viewport: SubViewport
-var _ring_style: StyleBoxFlat
-var _ring: Panel
 
 func _init() -> void:
-	custom_minimum_size = Vector2(270, 270)
+	custom_minimum_size = Vector2(300, 414)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _ready() -> void:
-	var disc := Panel.new()
-	Ui.full_rect(disc)
-	disc.add_theme_stylebox_override("panel", Ui.flat(Color("#241b63"), 512, Color(0, 0, 0, 0), 0, 0, 0))
-	disc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(disc)
+	# soft glowing floor under her feet
+	var g := Gradient.new()
+	g.colors = PackedColorArray([Color(0.49, 0.94, 1.0, 0.55), Color(0.49, 0.94, 1.0, 0.0)])
+	g.offsets = PackedFloat32Array([0.0, 1.0])
+	var gt := GradientTexture2D.new()
+	gt.gradient = g
+	gt.fill = GradientTexture2D.FILL_RADIAL
+	gt.fill_from = Vector2(0.5, 0.5)
+	gt.fill_to = Vector2(1.0, 0.5)
+	gt.width = 128
+	gt.height = 128
+	var glow := TextureRect.new()
+	glow.texture = gt
+	glow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	glow.stretch_mode = TextureRect.STRETCH_SCALE
+	glow.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	glow.offset_top = -78
+	glow.offset_bottom = 8
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(glow)
 
 	_viewport = SubViewport.new()
-	_viewport.size = Vector2i(VIEW_SIZE, VIEW_SIZE)
+	_viewport.size = VIEW
 	_viewport.transparent_bg = true
 	_viewport.own_world_3d = true
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
@@ -36,36 +51,52 @@ func _ready() -> void:
 	env.background_mode = Environment.BG_CLEAR_COLOR
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color("#9aa0ff")
-	env.ambient_light_energy = 0.85
+	env.ambient_light_energy = 0.9
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	_viewport.add_child(world_env)
 
 	var key := DirectionalLight3D.new()
-	key.rotation_degrees = Vector3(-30, 25, 0)
-	key.light_energy = 1.25
+	key.rotation_degrees = Vector3(-32, 25, 0)
+	key.light_energy = 1.3
 	_viewport.add_child(key)
 	var fill := OmniLight3D.new()
-	fill.position = Vector3(-1.4, 0.8, 2.0)
+	fill.position = Vector3(-1.6, 1.2, 2.4)
 	fill.light_color = Color("#6f9bff")
-	fill.light_energy = 2.2
-	fill.omni_range = 7.0
+	fill.light_energy = 2.4
+	fill.omni_range = 8.0
 	_viewport.add_child(fill)
 	var back := OmniLight3D.new()
-	back.position = Vector3(1.6, 1.0, -1.2)
+	back.position = Vector3(1.8, 1.6, -1.4)
 	back.light_color = Color("#c36bff")
-	back.light_energy = 2.0
-	back.omni_range = 6.0
+	back.light_energy = 2.2
+	back.omni_range = 7.0
 	_viewport.add_child(back)
+
+	# glowing rune disc she stands on
+	var disc_mesh := CylinderMesh.new()
+	disc_mesh.top_radius = 0.62
+	disc_mesh.bottom_radius = 0.62
+	disc_mesh.height = 0.02
+	disc_mesh.radial_segments = 28
+	var disc_mat := StandardMaterial3D.new()
+	disc_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	disc_mat.albedo_color = Color(0.45, 0.9, 1.0, 0.35)
+	disc_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var disc := MeshInstance3D.new()
+	disc.mesh = disc_mesh
+	disc.material_override = disc_mat
+	disc.position = Vector3(0, -0.02, 0)
+	_viewport.add_child(disc)
 
 	guardian = Guardian3D.new()
 	_viewport.add_child(guardian)
 
 	var cam := Camera3D.new()
-	cam.fov = 36.0
-	cam.position = Vector3(0, 0.44, 2.4)
+	cam.fov = 28.0
+	cam.position = Vector3(0, 1.17, 5.35)
 	_viewport.add_child(cam)
-	cam.look_at(Vector3(0, 0.36, 0), Vector3.UP)
+	cam.look_at(Vector3(0, 1.17, 0), Vector3.UP)
 	cam.make_current()
 
 	var view := TextureRect.new()
@@ -74,40 +105,45 @@ func _ready() -> void:
 	view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	view.stretch_mode = TextureRect.STRETCH_SCALE
 	view.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var shader := Shader.new()
-	shader.code = MASK_SHADER
-	var mat := ShaderMaterial.new()
-	mat.shader = shader
-	view.material = mat
 	add_child(view)
 
-	_ring_style = Ui.flat(Color(0, 0, 0, 0), 512, Color("#7ef0ff"), 7, 0, 0)
-	_ring_style.draw_center = false
-	_ring_style.shadow_color = Color(0.49, 0.94, 1.0, 0.45)
-	_ring_style.shadow_size = 14
-	_ring = Panel.new()
-	Ui.full_rect(_ring)
-	_ring.add_theme_stylebox_override("panel", _ring_style)
-	_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_ring)
+	# tap zone over her head and torso only
+	var zone := Button.new()
+	zone.set_anchors_preset(Control.PRESET_FULL_RECT)
+	zone.anchor_bottom = 0.55
+	zone.offset_left = 0
+	zone.offset_right = 0
+	zone.offset_top = 0
+	zone.offset_bottom = 0
+	zone.flat = true
+	zone.focus_mode = Control.FOCUS_NONE
+	zone.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+	zone.add_theme_stylebox_override("hover", StyleBoxEmpty.new())
+	zone.add_theme_stylebox_override("pressed", StyleBoxEmpty.new())
+	zone.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	zone.pressed.connect(_on_poked)
+	add_child(zone)
+
+func _on_poked() -> void:
+	poked.emit()
 
 func react(mood: String) -> void:
 	if guardian != null:
 		guardian.react(mood)
 
+func speak(seconds: float) -> void:
+	if guardian != null:
+		guardian.speak(seconds)
+
 func set_glow(color: Color) -> void:
 	if guardian != null:
 		guardian.set_glow(color)
-	if _ring_style != null:
-		_ring_style.border_color = color
-		_ring_style.shadow_color = Color(color, 0.45)
-		_ring.queue_redraw()
 
 # Makes the character glance toward a point on screen (viewport coordinates).
 func look_at_screen(screen_pos: Vector2) -> void:
 	if guardian == null:
 		return
 	var vs := get_viewport_rect().size
-	var centre := global_position + size * 0.5
+	var centre := global_position + Vector2(size.x * 0.5, size.y * 0.22)
 	var d := (screen_pos - centre) / maxf(1.0, vs.x)
 	guardian.look_target = Vector2(clampf(d.x * 1.4, -0.6, 0.6), clampf(d.y * 0.9, -0.4, 0.4))

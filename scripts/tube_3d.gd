@@ -88,7 +88,7 @@ func setup(index: int, cap: int) -> void:
 	area.collision_layer = 1
 	var shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(1.8, height + 0.5, 1.8)
+	box.size = Vector3(1.7, height + 0.5, 1.5)
 	shape.shape = box
 	area.add_child(shape)
 	add_child(area)
@@ -97,6 +97,30 @@ func setup(index: int, cap: int) -> void:
 func _on_input(_camera: Node, event: InputEvent, _position: Vector3, _normal: Vector3, _shape_idx: int) -> void:
 	if _tap.feed(event):
 		tapped.emit(tube_index)
+
+# Pop-in (and optional drop-in) used when tubes appear on the table.
+func play_spawn(delay: float = 0.0, drop: bool = false) -> void:
+	var target := position
+	scale = Vector3(0.05, 0.05, 0.05)
+	if drop:
+		position = target + Vector3(0, 5.0, 0)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(self, "scale", Vector3.ONE, 0.5).set_delay(delay).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	if drop:
+		tw.tween_property(self, "position", target, 0.75).set_delay(delay).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+
+# Existing tubes glide to their new place when the layout changes.
+func slide_to(target: Vector3, duration: float = 0.6) -> void:
+	var tw := create_tween()
+	tw.tween_property(self, "position", target, duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+# Glow for a moment (used to draw the eye to a freshly added tube).
+func pulse_highlight(seconds: float) -> void:
+	set_highlight(true)
+	var tw := create_tween()
+	tw.tween_interval(seconds)
+	tw.tween_callback(set_highlight.bind(false))
 
 func set_highlight(value: bool) -> void:
 	if _highlighted == value:

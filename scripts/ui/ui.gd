@@ -115,6 +115,21 @@ static func gradient_rect(c0: Color, c1: Color) -> TextureRect:
 static func full_rect(c: Control) -> void:
 	c.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+# ScrollContainers only start a drag-scroll when the press reaches them, but a
+# STOP control (every Button, PanelContainer, ...) swallows it. Calling this on
+# the content of a scroll list lets you start scrolling from anywhere, even on a
+# card or button; BaseButton cancels its press once the scroll begins, so nothing
+# is triggered by accident.
+static func scroll_friendly(root: Node) -> void:
+	for child in root.get_children():
+		if child is Control:
+			var c: Control = child
+			if c is BaseButton or c is ToggleSwitch:
+				c.mouse_filter = Control.MOUSE_FILTER_PASS
+			elif c.mouse_filter == Control.MOUSE_FILTER_STOP:
+				c.mouse_filter = Control.MOUSE_FILTER_PASS
+		scroll_friendly(child)
+
 static func ignore_mouse(node: Node) -> void:
 	if node is Control:
 		(node as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
