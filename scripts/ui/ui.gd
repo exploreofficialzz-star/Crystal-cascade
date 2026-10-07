@@ -235,6 +235,22 @@ static func glass_button(text: String, accent: Color, height: int = 130,
 	hook_click(b)
 	return b
 
+# Solid dark button with a bright accent border and white text: stays readable on
+# busy backgrounds (the translucent glass_button washes out on the victory art).
+static func solid_button(text: String, accent: Color, height: int = 130,
+		fsize: int = 40, icon_name: String = "") -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(0, height)
+	var r := int(height / 2)
+	b.add_theme_stylebox_override("normal", flat(Color(0.07, 0.09, 0.27, 0.96), r, Color(accent, 0.95), 4))
+	b.add_theme_stylebox_override("hover", flat(Color(0.10, 0.13, 0.34, 0.98), r, accent, 4))
+	b.add_theme_stylebox_override("pressed", flat(Color(0.14, 0.17, 0.42, 1.0), r, accent, 4))
+	b.add_theme_stylebox_override("disabled", flat(Color(0.07, 0.08, 0.2, 0.7), r, Color(accent, 0.3), 3))
+	_clear_focus_style(b)
+	_add_row(b, text, fsize, Color.WHITE, icon_name, true)
+	hook_click(b)
+	return b
+
 static func circle_button(icon_name: String, diameter: int = 120,
 		accent: Color = Color(1, 1, 1, 1)) -> Button:
 	var b := Button.new()

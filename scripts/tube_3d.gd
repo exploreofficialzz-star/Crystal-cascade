@@ -5,6 +5,14 @@ signal tapped(index: int)
 
 const EMISSION_IDLE := 0.35
 const EMISSION_ACTIVE := 2.8
+const EMISSION_TARGET := 1.1
+const RIM_IDLE := Color(0.25, 0.55, 1.0)
+const GOLD_GLOW := Color(1.0, 0.85, 0.35)
+
+# 0 = idle, 1 = selected, 2 = legal destination of the selected crystal
+const MODE_IDLE := 0
+const MODE_SELECTED := 1
+const MODE_TARGET := 2
 
 var tube_index := 0
 var capacity := 6
@@ -13,13 +21,21 @@ var rim: MeshInstance3D
 var base: MeshInstance3D
 var _rim_mat: StandardMaterial3D
 var _base_mat: StandardMaterial3D
-var _highlighted := false
+var _mode := 0
+var _glow_color := Color(1.0, 0.85, 0.35)
 var _tap := TapFilter.new()
+
+# Height of a tube holding `cap` crystals; slot_y() is where crystal j sits inside it.
+static func height_for(cap: int) -> float:
+	return maxf(4.9, float(cap) * 0.9)
+
+static func slot_y(cap: int, j: int) -> float:
+	return -height_for(cap) * 0.5 + 0.65 + float(j) * 0.82
 
 func setup(index: int, cap: int) -> void:
 	tube_index = index
 	capacity = cap
-	var height: float = maxf(4.9, float(capacity) * 0.9)
+	var height: float = height_for(capacity)
 
 	var glass_mat := StandardMaterial3D.new()
 	glass_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -122,14 +138,39 @@ func pulse_highlight(seconds: float) -> void:
 	tw.tween_interval(seconds)
 	tw.tween_callback(set_highlight.bind(false))
 
-func set_highlight(value: bool) -> void:
-	if _highlighted == value:
+# Selected tube: rim and base glow in `color`, the colour of the crystal about to move.
+func set_highlight(value: bool, color: Color = Color(1.0, 0.85, 0.35)) -> void:
+	_glow_color = color
+	_mode = MODE_SELECTED if value else MODE_IDLE
+	_apply_glow()
+
+# Soft glow on a tube that can receive the selected crystal.
+func set_target(value: bool, color: Color = Color(1.0, 0.85, 0.35)) -> void:
+	if value:
+		_glow_color = color
+		_mode = MODE_TARGET
+	elif _mode == MODE_TARGET:
+		_mode = MODE_IDLE
+	_apply_glow()
+
+func _apply_glow() -> void:
+	if _rim_mat == null or _base_mat == null:
 		return
-	_highlighted = value
-	if _rim_mat:
-		_rim_mat.emission_energy_multiplier = EMISSION_ACTIVE if value else EMISSION_IDLE
-		_rim_mat.emission = Color(1.0, 0.85, 0.35) if value else Color(0.25, 0.55, 1.0)
-	if _base_mat:
-		_base_mat.emission_energy_multiplier = 1.4 if value else 0.0
-	if rim:
-		rim.scale = Vector3(1.08, 1.08, 1.08) if value else Vector3.ONE
+	if _mode == MODE_SELECTED:
+		_rim_mat.emission_energy_multiplier = EMISSION_ACTIVE
+		_rim_mat.emission = _glow_color
+		_base_mat.emission = _glow_color
+		_base_mat.emission_energy_multiplier = 1.6
+		rim.scale = Vector3(1.08, 1.08, 1.08)
+	elif _mode == MODE_TARGET:
+		_rim_mat.emission_energy_multiplier = EMISSION_TARGET
+		_rim_mat.emission = _glow_color
+		_base_mat.emission = _glow_color
+		_base_mat.emission_energy_multiplier = 0.7
+		rim.scale = Vector3.ONE
+	else:
+		_rim_mat.emission_energy_multiplier = EMISSION_IDLE
+		_rim_mat.emission = RIM_IDLE
+		_base_mat.emission = Color(0.2, 0.4, 1.0)
+		_base_mat.emission_energy_multiplier = 0.0
+		rim.scale = Vector3.ONE

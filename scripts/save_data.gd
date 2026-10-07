@@ -44,6 +44,8 @@ static func _default_data() -> Dictionary:
 		"remove_ads_tier": "none",
 		"remove_ads_expiry": 0,
 		"levels": {},
+		"fails": {},
+		"seen_twists": [],
 		"processed_purchase_tokens": [],
 	}
 
@@ -71,6 +73,10 @@ func load_data() -> void:
 		data[key] = int(data[key])
 	if not (data.levels is Dictionary):
 		data.levels = {}
+	if not (data.fails is Dictionary):
+		data.fails = {}
+	if not (data.seen_twists is Array):
+		data.seen_twists = []
 	if not (data.processed_purchase_tokens is Array):
 		data.processed_purchase_tokens = []
 	if not (data.quest_progress is Dictionary):
@@ -218,6 +224,35 @@ func record_win() -> int:
 func record_loss() -> void:
 	data.win_streak = 0
 	save()
+
+# Failed attempts in a row on one level (used to ease the next try a little).
+func fail_count(id: int) -> int:
+	return int(data.fails.get(str(id), 0))
+
+func add_fail(id: int) -> void:
+	var f: Dictionary = data.fails
+	f[str(id)] = mini(9, int(f.get(str(id), 0)) + 1)
+	data.fails = f
+	save()
+
+func clear_fail(id: int) -> void:
+	var f: Dictionary = data.fails
+	if f.has(str(id)):
+		f.erase(str(id))
+		data.fails = f
+		save()
+
+func twist_seen(t: String) -> bool:
+	return t in data.seen_twists
+
+func mark_twist_seen(t: String) -> void:
+	if not twist_seen(t):
+		data.seen_twists.append(t)
+		save()
+
+# Wins still needed for the next treasure chest.
+func wins_to_chest() -> int:
+	return maxi(0, CHEST_EVERY - int(data.wins_since_chest))
 
 func chest_ready() -> bool:
 	return int(data.wins_since_chest) >= CHEST_EVERY

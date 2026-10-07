@@ -17,6 +17,25 @@ var director: CameraDirector
 var camera: Camera3D
 var environment: WorldEnvironment
 var star_particles: CPUParticles3D
+var _env: Environment
+var _fill_light: OmniLight3D
+var _rim_light: OmniLight3D
+var _backdrop_mat: StandardMaterial3D
+var _particle_mat: StandardMaterial3D
+
+# One look per level theme (see LevelGen.THEME_NAMES): sky, lights, backdrop and
+# cloth tint, so every level feels like a different place.
+const THEMES := [
+	{"bg": Color("#060a20"), "ambient": Color("#6272c8"), "fog": Color("#172354"), "fill": Color("#5c85ff"), "rim": Color("#b45cff"), "tint": Color(1.0, 1.0, 1.0), "cloth": Color(1.0, 1.0, 1.0), "particle": Color(0.65, 0.82, 1.0)},
+	{"bg": Color("#0d0626"), "ambient": Color("#8a62d8"), "fog": Color("#2a1560"), "fill": Color("#a56bff"), "rim": Color("#ff5cd6"), "tint": Color(1.25, 0.8, 1.3), "cloth": Color(1.15, 0.9, 1.2), "particle": Color(0.85, 0.7, 1.0)},
+	{"bg": Color("#041428"), "ambient": Color("#62a8d8"), "fog": Color("#123a66"), "fill": Color("#7fd8ff"), "rim": Color("#9fb8ff"), "tint": Color(0.7, 1.1, 1.45), "cloth": Color(0.85, 1.05, 1.25), "particle": Color(0.8, 0.95, 1.0)},
+	{"bg": Color("#031a14"), "ambient": Color("#62d8a0"), "fog": Color("#0f4a36"), "fill": Color("#5cffb0"), "rim": Color("#c8ff5c"), "tint": Color(0.7, 1.3, 0.95), "cloth": Color(0.85, 1.2, 0.95), "particle": Color(0.7, 1.0, 0.8)},
+	{"bg": Color("#1a0805"), "ambient": Color("#d88a62"), "fog": Color("#4a1c10"), "fill": Color("#ff9a5c"), "rim": Color("#ff4f5c"), "tint": Color(1.5, 0.95, 0.6), "cloth": Color(1.25, 0.95, 0.8), "particle": Color(1.0, 0.8, 0.55)},
+	{"bg": Color("#1a0516"), "ambient": Color("#d862b8"), "fog": Color("#4a1038"), "fill": Color("#ff7ac8"), "rim": Color("#ffa05c"), "tint": Color(1.4, 0.8, 1.05), "cloth": Color(1.25, 0.9, 1.0), "particle": Color(1.0, 0.75, 0.9)},
+	{"bg": Color("#030816"), "ambient": Color("#4a62d8"), "fog": Color("#0c1c4a"), "fill": Color("#5cffd0"), "rim": Color("#b45cff"), "tint": Color(0.75, 1.15, 1.1), "cloth": Color(0.85, 1.05, 1.15), "particle": Color(0.6, 1.0, 0.9)},
+	{"bg": Color("#181206"), "ambient": Color("#d8c062"), "fog": Color("#4a3a10"), "fill": Color("#ffe05c"), "rim": Color("#ffb05c"), "tint": Color(1.45, 1.2, 0.8), "cloth": Color(1.2, 1.1, 0.85), "particle": Color(1.0, 0.92, 0.6)},
+	{"bg": Color("#12061f"), "ambient": Color("#b862d8"), "fog": Color("#3a1060"), "fill": Color("#ffd05c"), "rim": Color("#c05cff"), "tint": Color(1.3, 0.95, 1.35), "cloth": Color(1.2, 0.95, 1.2), "particle": Color(1.0, 0.85, 0.5)},
+]
 
 func build() -> void:
 	_build_environment()
@@ -39,6 +58,7 @@ func build() -> void:
 func _build_environment() -> void:
 	environment = WorldEnvironment.new()
 	var env := Environment.new()
+	_env = env
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color("#060a20")
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
@@ -67,12 +87,14 @@ func _build_lights() -> void:
 	fill.light_color = Color("#5c85ff")
 	fill.light_energy = 5.5
 	fill.omni_range = 20.0
+	_fill_light = fill
 	add_child(fill)
 	var rim := OmniLight3D.new()
 	rim.position = Vector3(-8, 4, -5)
 	rim.light_color = Color("#b45cff")
 	rim.light_energy = 4.0
 	rim.omni_range = 16.0
+	_rim_light = rim
 	add_child(rim)
 
 # Curved wall behind the table (an arc of a cylinder, 156 degrees wide).
@@ -112,6 +134,7 @@ func _build_backdrop() -> void:
 	else:
 		mat.albedo_color = Color("#141a48")
 	mi.material_override = mat
+	_backdrop_mat = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
 
@@ -167,9 +190,61 @@ func _build_particles() -> void:
 	particle_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	particle_material.albedo_color = Color(0.65, 0.82, 1.0)
 	particle_mesh.material = particle_material
+	_particle_mat = particle_material
 	star_particles.mesh = particle_mesh
 	add_child(star_particles)
 	star_particles.emitting = true
+
+# Re-colours the sky, lights, backdrop and cloth for a level theme. Call before arrange().
+func apply_theme(index: int) -> void:
+	var t: Dictionary = THEMES[clampi(index, 0, THEMES.size() - 1)]
+	if _env != null:
+		_env.background_color = t["bg"]
+		_env.ambient_light_color = t["ambient"]
+		_env.fog_light_color = t["fog"]
+	if _fill_light != null:
+		_fill_light.light_color = t["fill"]
+	if _rim_light != null:
+		_rim_light.light_color = t["rim"]
+	if _backdrop_mat != null and _backdrop_mat.albedo_texture != null:
+		_backdrop_mat.albedo_color = t["tint"]
+	if _particle_mat != null:
+		_particle_mat.albedo_color = t["particle"]
+	if table != null:
+		table.cloth_tint = t["cloth"]
+
+# One-shot sparkle burst above a tube (a cleared triple).
+func burst(tube_index: int, color: Color) -> void:
+	var tube := get_tube(tube_index)
+	if tube == null:
+		return
+	var p := CPUParticles3D.new()
+	p.amount = 24
+	p.lifetime = 0.9
+	p.one_shot = true
+	p.explosiveness = 1.0
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	p.emission_sphere_radius = 0.5
+	p.direction = Vector3(0, 1, 0)
+	p.spread = 180.0
+	p.initial_velocity_min = 2.0
+	p.initial_velocity_max = 4.5
+	p.gravity = Vector3(0, -4.0, 0)
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var m := SphereMesh.new()
+	m.radius = 0.07
+	m.height = 0.14
+	m.radial_segments = 6
+	m.rings = 3
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = color
+	m.material = mat
+	p.mesh = m
+	add_child(p)
+	p.global_position = tube.global_position + Vector3(0, 0.6, 0)
+	p.emitting = true
+	get_tree().create_timer(1.5).timeout.connect(p.queue_free)
 
 # The whole 3D world is hidden (and stops updating) while a menu is open.
 func set_active(value: bool) -> void:
@@ -192,10 +267,12 @@ func arrange(tube_count: int, capacity: int, intro: bool = true, old_positions: 
 		child.queue_free()
 	if tube_count <= 0:
 		return
-	var layout := BoardLayout.compute(tube_count)
+	var tube_h: float = Tube3D.height_for(capacity)
+	var layout := BoardLayout.compute(tube_count, tube_h)
 	var pos: Array = layout["pos"]
 	var rows: int = int(layout["rows"])
-	var base_y: float = capacity * 0.45 - 0.1
+	var riser: float = float(layout["riser"])
+	var base_y: float = tube_h * 0.5 - 0.1
 	for i in range(tube_count):
 		var p: Vector3 = pos[i]
 		var target := Vector3(p.x, base_y + p.y, p.z)
@@ -214,8 +291,8 @@ func arrange(tube_count: int, capacity: int, intro: bool = true, old_positions: 
 		elif intro:
 			tube.play_spawn(0.1 * float(i), false)
 	table.build(layout)
-	var height: float = maxf(4.9, float(capacity) * 0.9) + (BoardLayout.RISER if rows > 1 else 0.0)
-	var center_y: float = base_y + (BoardLayout.RISER * 0.5 if rows > 1 else 0.0)
+	var height: float = tube_h + ((riser + float(layout["back_dz"]) * 0.75) if rows > 1 else 0.0)
+	var center_y: float = base_y + (riser * 0.5 if rows > 1 else 0.0)
 	director.configure(center_y, float(layout["half_w"]), height, rows, old_positions.size() == 0)
 	if intro:
 		director.play_intro()

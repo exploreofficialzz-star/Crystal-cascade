@@ -12,10 +12,11 @@ const BROW_Y := 0.125
 const HOLD := {
 	"happy": 1.6, "cheer": 2.4, "dance": 3.4, "surprised": 1.4, "sad": 2.4,
 	"angry": 1.6, "think": 2.8, "wave": 2.4, "point": 2.6, "clap": 2.6,
+	"wink": 1.8, "shrug": 2.0, "thumbs": 2.2, "sleepy": 4.0,
 }
-# eye open, brow tilt, brow raise, smile (-1..1), mouth open (0..1), head tilt
+# eye open, brow tilt, brow raise, smile (-1..1), mouth open (0..1), head tilt, wink (0..1)
 const FACES := {
-	"idle": {"eye": 1.0, "brow": 0.0, "bup": 0.0, "smile": 0.35, "open": 0.0, "tilt": 0.0},
+	"idle": {"eye": 1.0, "brow": 0.0, "bup": 0.0, "smile": 0.35, "open": 0.0, "tilt": 0.0, "wink": 0.0},
 	"happy": {"eye": 0.82, "brow": -0.12, "bup": 0.03, "smile": 1.0, "open": 0.7, "tilt": 0.10},
 	"cheer": {"eye": 0.78, "brow": -0.14, "bup": 0.04, "smile": 1.0, "open": 1.0, "tilt": 0.08},
 	"dance": {"eye": 0.80, "brow": -0.12, "bup": 0.03, "smile": 1.0, "open": 0.8, "tilt": 0.12},
@@ -26,6 +27,10 @@ const FACES := {
 	"angry": {"eye": 0.78, "brow": 0.60, "bup": -0.02, "smile": -0.4, "open": 0.0, "tilt": 0.0},
 	"think": {"eye": 0.95, "brow": -0.25, "bup": 0.05, "smile": 0.05, "open": 0.0, "tilt": 0.16},
 	"point": {"eye": 1.0, "brow": -0.05, "bup": 0.02, "smile": 0.5, "open": 0.0, "tilt": 0.05},
+	"wink": {"eye": 0.92, "brow": -0.08, "bup": 0.03, "smile": 1.0, "open": 0.25, "tilt": 0.15, "wink": 1.0},
+	"shrug": {"eye": 0.95, "brow": -0.30, "bup": 0.05, "smile": -0.15, "open": 0.0, "tilt": 0.13, "wink": 0.0},
+	"thumbs": {"eye": 0.85, "brow": -0.10, "bup": 0.03, "smile": 1.0, "open": 0.5, "tilt": 0.06, "wink": 0.0},
+	"sleepy": {"eye": 0.38, "brow": -0.20, "bup": 0.0, "smile": 0.1, "open": 0.55, "tilt": -0.12, "wink": 0.0},
 }
 
 var mood := "idle"
@@ -37,6 +42,12 @@ var _blink_in := 2.5
 var _blink_t := -1.0
 var _jv: Dictionary = {}
 var _fv: Dictionary = {}
+var _last_look := Vector2.ZERO
+var _since_look := 0.0
+var _wander := Vector2.ZERO
+var _wander_in := 2.0
+var _lock_l: Node3D
+var _lock_r: Node3D
 
 var _root: Node3D
 var _hips: Node3D
@@ -244,9 +255,11 @@ func _build_head(head: Node3D, skin: Material, skin_dark: Material, gold: Materi
 	for fx in [-0.13, 0.0, 0.13]:
 		_part(head, _sph(0.10, 16), Vector3(fx, 0.215, 0.17), hair, Vector3(1.05, 0.6, 0.85))
 	_part(head, _sph(0.045, 12), Vector3(0.06, 0.225, 0.25), hair_hi, Vector3(1.6, 0.5, 0.6))
-	_part(head, _cap(0.075, 0.42), Vector3(-0.29, -0.14, 0.02), hair, Vector3(1, 1, 0.9))
-	_part(head, _cap(0.075, 0.42), Vector3(0.29, -0.14, 0.02), hair, Vector3(1, 1, 0.9))
-	_part(head, _sph(0.06, 12), Vector3(0.30, -0.36, 0.02), hair_hi)
+	_lock_l = _node(head, Vector3(-0.29, 0.05, 0.02))
+	_part(_lock_l, _cap(0.075, 0.42), Vector3(0, -0.19, 0), hair, Vector3(1, 1, 0.9))
+	_lock_r = _node(head, Vector3(0.29, 0.05, 0.02))
+	_part(_lock_r, _cap(0.075, 0.42), Vector3(0, -0.19, 0), hair, Vector3(1, 1, 0.9))
+	_part(_lock_r, _sph(0.06, 12), Vector3(0.01, -0.41, 0), hair_hi)
 
 	# forehead crystal
 	var gem := PrismMesh.new()
@@ -258,6 +271,10 @@ func _build_head(head: Node3D, skin: Material, skin_dark: Material, gold: Materi
 	for side in [-1, 1]:
 		var eye := _node(head, Vector3(side * 0.115, 0.03, 0.245))
 		_part(eye, _sph(0.062, 20), Vector3.ZERO, white, Vector3(1.0, 1.15, 0.55))
+		var liner := _part(eye, _cap(0.009, 0.14), Vector3(0, 0.072, 0.03), pupil)
+		liner.rotation.z = PI / 2.0
+		var flick := _part(eye, _cap(0.007, 0.06), Vector3(side * 0.07, 0.078, 0.03), pupil)
+		flick.rotation.z = -side * 0.7
 		var ir := _node(eye, Vector3(0, 0, 0.02))
 		_part(ir, _sph(0.040, 16), Vector3.ZERO, iris, Vector3(1, 1, 0.5))
 		_part(ir, _sph(0.021, 12), Vector3(0, 0, 0.012), pupil, Vector3(1, 1, 0.5))
@@ -428,6 +445,38 @@ func _pose(m: String, t: float, mt: float) -> Dictionary:
 			p["avl"] = -0.55
 			p["evl"] = -1.5
 			p["hrz"] = sin(t * 1.5) * 0.02
+		"wink":
+			p["hy"] = b * 0.04
+			p["hrz"] = 0.07
+			p["trz"] = -0.04
+			p["avr"] = 0.55
+			p["evr"] = -0.7
+			p["avl"] = -0.25
+		"shrug":
+			p["hrz"] = sin(t * 3.0) * 0.05
+			p["hy"] = 0.03
+			p["avl"] = -0.75
+			p["avr"] = 0.75
+			p["evl"] = -1.1
+			p["evr"] = -1.1
+			p["afl"] = -0.2
+			p["afr"] = -0.2
+		"thumbs":
+			p["hy"] = b * 0.06
+			p["trx"] = -0.05
+			p["avr"] = 0.25
+			p["afr"] = -1.15
+			p["evr"] = -1.0
+			p["avl"] = -0.2
+		"sleepy":
+			p["trx"] = 0.10 + sin(t * 1.1) * 0.02
+			p["hdp"] = 0.18
+			p["hy"] = -0.03
+			p["hrz"] = sin(t * 0.8) * 0.03
+			p["avr"] = -0.15
+			p["afr"] = -1.3
+			p["evr"] = -2.1
+			p["avl"] = -0.1
 	return p
 
 func _process(delta: float) -> void:
@@ -458,12 +507,13 @@ func _process(delta: float) -> void:
 
 	# face
 	var face: Dictionary = FACES[mood]
-	for key in face.keys():
-		_fv[key] = lerpf(float(_fv[key]), float(face[key]), k)
+	for key in _fv.keys():
+		_fv[key] = lerpf(float(_fv[key]), float(face.get(key, 0.0)), k)
 	_blink_in -= delta
 	if _blink_in <= 0.0 and _blink_t < 0.0:
 		_blink_t = 0.0
-		_blink_in = randf_range(2.2, 5.0)
+		# now and then a quick double blink, like a person
+		_blink_in = 0.24 if randf() < 0.22 else randf_range(2.2, 5.0)
 	var blink := 1.0
 	if _blink_t >= 0.0:
 		_blink_t += delta
@@ -471,8 +521,9 @@ func _process(delta: float) -> void:
 		if _blink_t > 0.14:
 			_blink_t = -1.0
 	var eye_open := float(_fv["eye"]) * blink
+	var wink_amt := clampf(float(_fv.get("wink", 0.0)), 0.0, 1.0)
 	_eye_l.scale = Vector3(1, eye_open, 1)
-	_eye_r.scale = Vector3(1, eye_open, 1)
+	_eye_r.scale = Vector3(1, maxf(0.08, eye_open * (1.0 - 0.92 * wink_amt)), 1)
 	var bu := float(_fv["bup"])
 	var ba := float(_fv["brow"])
 	_brow_l.rotation.z = -ba
@@ -490,11 +541,33 @@ func _process(delta: float) -> void:
 	_mouth_open.position.y = -0.165 - open * 0.012
 
 	# head: look-at, mood tilt, idle sway
-	var yaw := clampf(look_target.x, -0.6, 0.6)
-	var pitch := clampf(look_target.y, -0.4, 0.4) + float(_jv["hdp"])
+	if look_target != _last_look:
+		_last_look = look_target
+		_since_look = 0.0
+	else:
+		_since_look += delta
+	var gaze := look_target
+	if _since_look > 6.0:
+		# nobody is tapping: let her glance around the way a person would
+		_wander_in -= delta
+		if _wander_in <= 0.0:
+			_wander = Vector2(randf_range(-0.38, 0.38), randf_range(-0.14, 0.12))
+			if randf() < 0.3:
+				_wander = Vector2.ZERO
+			_wander_in = randf_range(1.6, 4.2)
+		gaze = _wander
+	var yaw := clampf(gaze.x, -0.6, 0.6)
+	var pitch := clampf(gaze.y, -0.4, 0.4) + float(_jv["hdp"])
+	if talk > 0.0:
+		pitch += sin(_time * 9.0) * 0.025
 	_head.rotation.y = lerpf(_head.rotation.y, yaw, k)
 	_head.rotation.x = lerpf(_head.rotation.x, pitch, k)
 	_head.rotation.z = float(_fv["tilt"]) + sin(_time * 0.9) * 0.025
+	# breathing and swinging hair
+	var br := sin(_time * 1.7)
+	_torso.scale = Vector3(1.0 + br * 0.006, 1.0 + br * 0.012, 1.0)
+	_lock_l.rotation.z = 0.03 + sin(_time * 1.2) * 0.035 - _head.rotation.z * 0.6
+	_lock_r.rotation.z = -0.03 + sin(_time * 1.2 + 1.3) * 0.035 - _head.rotation.z * 0.6
 	var shift := Vector3(yaw * 0.03, -pitch * 0.03, 0)
 	_iris_l.position = Vector3(shift.x, shift.y, 0.02)
 	_iris_r.position = Vector3(shift.x, shift.y, 0.02)

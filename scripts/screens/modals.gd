@@ -88,8 +88,8 @@ static func tutorial(parent: Control, on_close: Callable) -> Control:
 	var steps := [
 		["1", "Tap a tube to lift its top crystal."],
 		["2", "Tap a tube with the same colour on top, or an empty tube."],
-		["3", "Line up 3 or more matching crystals to clear them."],
-		["4", "Clear every tube to win. Fewer moves = more stars."],
+		["3", "Line up 3 matching crystals to clear them."],
+		["4", "Clear every crystal to win. Fewer moves = more stars."],
 		["5", "Drag on the table to look around, or use the camera button."],
 	]
 	for step in steps:
@@ -197,9 +197,10 @@ static func daily_login(parent: Control, day: int, reward_text: String, reward_i
 		box.add_child(dbl)
 	return ov
 
-# Treasure chest after every third win.
+# Treasure chest after every third win (and a bigger one after every boss level).
 static func chest(parent: Control, reward_text: String, reward_icon: String,
-		can_double: bool, on_collect: Callable, on_double: Callable) -> Control:
+		can_double: bool, on_collect: Callable, on_double: Callable,
+		title: String = "TREASURE CHEST!", sub: String = "You cleared 3 levels. Here is your prize:") -> Control:
 	var ov := _base(parent, 0.84)
 	var box := _box(ov)
 	var hero := Ui.icon("chest", 170, Color("#ffcf5a"))
@@ -211,8 +212,8 @@ static func chest(parent: Control, reward_text: String, reward_icon: String,
 	tw.tween_property(hero, "rotation", 0.12, 0.09)
 	tw.tween_property(hero, "rotation", -0.12, 0.18)
 	tw.tween_property(hero, "rotation", 0.0, 0.09)
-	box.add_child(Ui.label("TREASURE CHEST!", 56, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
-	box.add_child(_text("You cleared 3 levels. Here is your prize:"))
+	box.add_child(Ui.label(title, 56, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(_text(sub))
 	var rw := HBoxContainer.new()
 	rw.alignment = BoxContainer.ALIGNMENT_CENTER
 	rw.add_theme_constant_override("separation", 16)
@@ -226,4 +227,51 @@ static func chest(parent: Control, reward_text: String, reward_icon: String,
 		var dbl := Ui.pill_button("WATCH VIDEO: DOUBLE IT", "gold", 120, 34, "video")
 		dbl.pressed.connect(_wrap(ov, on_double))
 		box.add_child(dbl)
+	return ov
+
+# Out of hints: watch a video, visit the shop or finish a daily task.
+static func get_more(parent: Control, icon_name: String, accent: Color, title: String, desc: String,
+		watch_text: String, watch_enabled: bool, on_watch: Callable, on_shop: Callable,
+		on_tasks: Callable, on_cancel: Callable) -> Control:
+	var ov := _base(parent, 0.82)
+	var box := _box(ov)
+	var badge := PanelContainer.new()
+	badge.custom_minimum_size = Vector2(150, 150)
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	badge.add_theme_stylebox_override("panel", Ui.flat(Color(accent, 0.25), 80, Color(accent, 0.6), 3, 0, 0))
+	var cc := CenterContainer.new()
+	badge.add_child(cc)
+	cc.add_child(Ui.icon(icon_name, 84, accent))
+	box.add_child(badge)
+	box.add_child(Ui.label(title, 56, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(_text(desc))
+	var watch := Ui.pill_button(watch_text if watch_enabled else "Video not ready", "pink", 128, 38, "video")
+	watch.disabled = not watch_enabled
+	watch.pressed.connect(_wrap(ov, on_watch))
+	box.add_child(watch)
+	var shop := Ui.pill_button("GO TO SHOP", "gold", 128, 38, "bag")
+	shop.pressed.connect(_wrap(ov, on_shop))
+	box.add_child(shop)
+	var tasks := Ui.pill_button("DAILY TASKS", "blue", 128, 38, "gift")
+	tasks.pressed.connect(_wrap(ov, on_tasks))
+	box.add_child(tasks)
+	var cancel := Ui.glass_button("Not now", Ui.GREY, 108, 34)
+	cancel.pressed.connect(_wrap(ov, on_cancel))
+	box.add_child(cancel)
+	return ov
+
+# First time a twist (gold, cascade, shadow, boss) shows up: a short introduction.
+static func twist_intro(parent: Control, title: String, text: String, accent: Color, on_close: Callable) -> Control:
+	var ov := _base(parent, 0.80)
+	var box := _box(ov)
+	var tag := PanelContainer.new()
+	tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	tag.add_theme_stylebox_override("panel", Ui.flat(Color(accent, 0.25), 40, Color(accent, 0.95), 3, 30, 8))
+	tag.add_child(Ui.label("NEW", 36, accent, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(tag)
+	box.add_child(Ui.label(title, 56, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(_text(text))
+	var ok := Ui.pill_button("LET'S GO", "pink", 128, 42, "play")
+	ok.pressed.connect(_wrap(ov, on_close))
+	box.add_child(ok)
 	return ov

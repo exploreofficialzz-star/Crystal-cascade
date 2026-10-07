@@ -62,7 +62,7 @@ func _ready() -> void:
 # half_w: half the width of the tube rows (incl. tube radius); height: tube height.
 func configure(center_y: float, half_w: float, height: float, rows: int = 1, snap_now: bool = true) -> void:
 	# Look slightly above the board centre so the board sits below the HUD.
-	_center = Vector3(0.0, center_y + 0.7, 0.0)
+	_center = Vector3(0.0, center_y + (1.8 if rows > 1 else 0.7), 0.0)
 	_focus = _center
 	rows_pitch = 9.0 if rows > 1 else 0.0
 	var vs := get_viewport().get_visible_rect().size

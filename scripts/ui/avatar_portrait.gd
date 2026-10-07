@@ -8,13 +8,14 @@ extends Control
 
 signal poked
 
-const VIEW := Vector2i(340, 470)
+const VIEW := Vector2i(440, 608)
+const SHOW_SIZE := Vector2(420, 580)
 
 var guardian: Guardian3D
 var _viewport: SubViewport
 
 func _init() -> void:
-	custom_minimum_size = Vector2(300, 414)
+	custom_minimum_size = SHOW_SIZE
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _ready() -> void:
@@ -34,8 +35,8 @@ func _ready() -> void:
 	glow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	glow.stretch_mode = TextureRect.STRETCH_SCALE
 	glow.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	glow.offset_top = -78
-	glow.offset_bottom = 8
+	glow.offset_top = -104
+	glow.offset_bottom = 10
 	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(glow)
 

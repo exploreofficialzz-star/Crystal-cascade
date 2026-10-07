@@ -3,8 +3,8 @@ extends RefCounted
 
 const APP_NAME := "Crystal Cascade"
 const PACKAGE_NAME := "com.chastechgroup.crystalcascade"
-const VERSION_NAME := "2.7.0"
-const VERSION_CODE := 23
+const VERSION_NAME := "2.8.0"
+const VERSION_CODE := 24
 
 # false = Google's public TEST ad units (safe to tap while testing).
 # CI flips this to true automatically for the Play Store bundle (AAB) only.

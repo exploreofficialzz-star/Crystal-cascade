@@ -91,6 +91,36 @@ jobs:
           EOF
           cat "$HOME/.config/godot/editor_settings-4.tres"
 
+      - name: Hide the Android system splash icon (only the game logo splash remains)
+        continue-on-error: true
+        run: |
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATES_VERSION}"
+          python3 - "$TEMPLATE_DIR/android_source.zip" <<'PY'
+          import os, re, shutil, sys, zipfile
+          src = sys.argv[1]
+          tmp = src + ".patched"
+          navy = "#FF090A1A"
+          changed = 0
+          with zipfile.ZipFile(src) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+              for item in zin.infolist():
+                  data = zin.read(item.filename)
+                  if re.search(r"res/values[^/]*/(themes|styles)\.xml$", item.filename):
+                      text = data.decode("utf-8")
+                      new = re.sub(r'(<item\s+name="(?:android:)?windowSplashScreenBackground"\s*>)[^<]*(</item>)',
+                                   r'\g<1>' + navy + r'\g<2>', text)
+                      new = re.sub(r'(<item\s+name="(?:android:)?windowSplashScreenAnimatedIcon"\s*>)[^<]*(</item>)',
+                                   r'\g<1>@android:color/transparent\g<2>', new)
+                      if new != text:
+                          changed += 1
+                          data = new.encode("utf-8")
+                  zout.writestr(item, data)
+          if changed:
+              shutil.move(tmp, src)
+          else:
+              os.remove(tmp)
+          print("splash theme files patched:", changed)
+          PY
+
       - name: Install AdMob plugin
         env:
           GH_TOKEN: ${{ github.token }}

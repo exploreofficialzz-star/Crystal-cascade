@@ -21,6 +21,8 @@ const QUEST_POOL := [
 	{"id": "combo", "title": "Reach a x3 combo", "goal": 1, "type": "coins", "amount": 50},
 	{"id": "nohint", "title": "Win a level without hints", "goal": 1, "type": "coins", "amount": 45},
 	{"id": "perfect", "title": "Get 3 stars on a level", "goal": 1, "type": "lives", "amount": 1},
+	{"id": "gold", "title": "Collect 3 gold crystals", "goal": 3, "type": "coins", "amount": 60},
+	{"id": "cascade", "title": "Trigger a cascade", "goal": 1, "type": "hints", "amount": 1},
 ]
 
 const MILESTONES := [

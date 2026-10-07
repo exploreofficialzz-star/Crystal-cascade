@@ -9,6 +9,9 @@ const TOP_Y := -0.25          # top of the wooden slab
 const CLOTH_H := 0.04         # tube bases rest on TOP_Y + CLOTH_H
 const FLOOR_Y := -2.9
 
+# Per-level cloth colour (set by GameWorld.apply_theme before build()).
+var cloth_tint := Color(1, 1, 1)
+
 func _mi(mesh: Mesh, pos: Vector3, mat: Material) -> MeshInstance3D:
 	var m := MeshInstance3D.new()
 	m.mesh = mesh
@@ -102,7 +105,7 @@ func build(layout: Dictionary) -> void:
 
 	var wood := _textured("res://assets/textures/wood_planks.png", 0.22, Color(1, 1, 1), 0.5)
 	var wood_dark := _textured("res://assets/textures/wood_planks.png", 0.22, Color(0.55, 0.42, 0.40), 0.55)
-	var cloth := _textured("res://assets/textures/velvet.png", 0.9, Color(1, 1, 1), 0.95)
+	var cloth := _textured("res://assets/textures/velvet.png", 0.9, cloth_tint, 0.95)
 	var gold := _mat(Color("#e8c243"), 0.28, 0.85)
 	gold.emission_enabled = true
 	gold.emission = Color("#e8c243")
@@ -129,7 +132,7 @@ func build(layout: Dictionary) -> void:
 	var back_prop_y := TOP_Y
 	var back_half := half_w - 0.42
 	if rows > 1 and back_max_x > back_min_x - 1.0:
-		var rh := BoardLayout.RISER
+		var rh: float = float(layout["riser"])
 		var rw := (back_max_x - back_min_x) + 2.8
 		var rcx := (back_min_x + back_max_x) * 0.5
 		var rd := 2.9
