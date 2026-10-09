@@ -28,6 +28,12 @@ func _ready() -> void:
 		var voice := AudioStreamPlayer.new()
 		add_child(voice)
 		sfx_players.append(voice)
+
+# Loaded by main.gd after the home screen is up (decoding the MP3 used to delay
+# the first screen).
+func load_music() -> void:
+	if music_player == null or music_player.stream != null:
+		return
 	var music := _load_stream(MUSIC_PATH)
 	if music:
 		# Imported MP3s do not loop by default, so the music used to play once

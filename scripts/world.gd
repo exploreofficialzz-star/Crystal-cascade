@@ -22,6 +22,7 @@ var _fill_light: OmniLight3D
 var _rim_light: OmniLight3D
 var _backdrop_mat: StandardMaterial3D
 var _particle_mat: StandardMaterial3D
+var _burst_fx: CPUParticles3D
 
 # One look per level theme (see LevelGen.THEME_NAMES): sky, lights, backdrop and
 # cloth tint, so every level feels like a different place.
@@ -54,6 +55,7 @@ func build() -> void:
 	add_child(director)
 	camera = director.camera
 	_build_particles()
+	_build_burst()
 
 func _build_environment() -> void:
 	environment = WorldEnvironment.new()
@@ -213,16 +215,17 @@ func apply_theme(index: int) -> void:
 	if table != null:
 		table.cloth_tint = t["cloth"]
 
-# One-shot sparkle burst above a tube (a cleared triple).
-func burst(tube_index: int, color: Color) -> void:
-	var tube := get_tube(tube_index)
-	if tube == null:
-		return
+# ONE shared one-shot emitter for the match sparkle. (Creating a fresh particle
+# node, mesh and material for every cleared triple churned the GPU resources of
+# the GL Compatibility renderer; re-using one emitter does not.)
+func _build_burst() -> void:
 	var p := CPUParticles3D.new()
+	p.name = "MatchBurst"
 	p.amount = 24
 	p.lifetime = 0.9
 	p.one_shot = true
 	p.explosiveness = 1.0
+	p.emitting = false
 	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
 	p.emission_sphere_radius = 0.5
 	p.direction = Vector3(0, 1, 0)
@@ -238,13 +241,20 @@ func burst(tube_index: int, color: Color) -> void:
 	m.rings = 3
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = color
+	mat.vertex_color_use_as_albedo = true
 	m.material = mat
 	p.mesh = m
 	add_child(p)
-	p.global_position = tube.global_position + Vector3(0, 0.6, 0)
-	p.emitting = true
-	get_tree().create_timer(1.5).timeout.connect(p.queue_free)
+	_burst_fx = p
+
+# Sparkle burst above a tube (a cleared triple).
+func burst(tube_index: int, color: Color) -> void:
+	var tube := get_tube(tube_index)
+	if tube == null or _burst_fx == null:
+		return
+	_burst_fx.global_position = tube.global_position + Vector3(0, 0.6, 0)
+	_burst_fx.color = color
+	_burst_fx.restart()
 
 # The whole 3D world is hidden (and stops updating) while a menu is open.
 func set_active(value: bool) -> void:

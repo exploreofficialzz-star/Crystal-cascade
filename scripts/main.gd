@@ -47,7 +47,8 @@ var screen_root: Control
 var overlay_root: Control
 var screen: Control = null
 var hud: GameHud = null
-var splash: SplashScreen = null
+var _world_ready := false
+var _start_waiting := false
 
 var current_screen: UiScreen = UiScreen.NONE
 var game_status := GameData.Status.IDLE
@@ -93,7 +94,7 @@ var _pending_reveals: Array = []
 # Every risky step is written to a small file and flushed immediately. Hidden in
 # production: in Settings tap "Version" 7 times to open the viewer. Set
 # SHOW_CRASH_TRAIL to true to show the previous run's trail automatically.
-const SHOW_CRASH_TRAIL := false
+const SHOW_CRASH_TRAIL := true
 const CRASH_LOG_PATH := "user://crash_trail.txt"
 const MARK_CLEAN := "=== SESSION ENDED CLEANLY ==="
 const MARK_PAUSED := "=== APP PAUSED ==="
@@ -169,11 +170,13 @@ func _ready() -> void:
 	audio.voice_enabled = bool(save.data.voice)
 	Ui.sfx_target = self
 	_build_root_ui()
-	splash = SplashScreen.new()
-	overlay_root.add_child(splash)
-	splash.setup()
+	_make_platform()
+	# The home screen is built right here, before the first frame: the engine's
+	# boot splash is the only splash and it hands over straight to the menu.
+	show_home()
+	_trail("home screen shown")
 	await get_tree().process_frame
-	await _boot(crashed)
+	await _boot_background(crashed)
 	_trail("main._ready complete")
 
 func _asset_paths() -> Array:
@@ -188,27 +191,9 @@ func _asset_paths() -> Array:
 		paths.append("res://assets/textures/%s.png" % n)
 	return paths
 
-# Preloads art and sound, builds the 3D world, starts the ad/billing plugins and
-# warms up the shaders behind the logo cover, then reveals the home screen. There
-# is no loading screen: the cover is the same logo on the same background as the
-# engine's boot splash, so the launch looks like one splash.
-func _boot(crashed: bool) -> void:
-	var paths := _asset_paths()
-	for i in range(paths.size()):
-		Ui.tex(paths[i])
-		if i % 8 == 7:
-			await get_tree().process_frame
-	for i in range(audio.preload_count()):
-		audio.preload_one(i)
-		if i % 5 == 4:
-			await get_tree().process_frame
-	await get_tree().process_frame
-	world = GameWorld.new()
-	add_child(world)
-	world.build()
-	world.set_active(false)
-	world.set_auto_camera(bool(save.data.auto_camera))
-	_trail("world.build() returned")
+# The ad/billing bridge object exists from the start (it is null-safe until
+# setup() runs in the background boot below).
+func _make_platform() -> void:
 	platform = AndroidPlatform.new()
 	add_child(platform)
 	platform.diagnostic.connect(_trail)
@@ -219,24 +204,47 @@ func _boot(crashed: bool) -> void:
 	platform.restore_finished.connect(_on_restore_finished)
 	platform.prices_updated.connect(_on_prices_updated)
 	platform.banner_height_changed.connect(_on_banner_height)
+
+# Everything the home screen does not need is prepared AFTER it is on screen:
+# remaining art and sound, the 3D world, ads/billing and a shader warm-up. If
+# PLAY is tapped before this finishes, start_level() waits for it.
+func _boot_background(crashed: bool) -> void:
+	if crashed and SHOW_CRASH_TRAIL:
+		_show_diagnostics()
+	var paths := _asset_paths()
+	for i in range(paths.size()):
+		Ui.tex(paths[i])
+		if i % 10 == 9:
+			await get_tree().process_frame
+	for i in range(audio.preload_count()):
+		audio.preload_one(i)
+		if i % 6 == 5:
+			await get_tree().process_frame
+	await get_tree().process_frame
+	_trail("background: world.build() begin")
+	world = GameWorld.new()
+	add_child(world)
+	world.build()
+	world.set_active(false)
+	world.set_auto_camera(bool(save.data.auto_camera))
+	_trail("background: world.build() returned")
 	platform.setup(save)
 	await get_tree().process_frame
 	await _warm_up()
+	audio.load_music()
 	audio.set_music(bool(save.data.music))
-	show_home()
-	splash.fade_out()
-	splash = null
+	_world_ready = true
+	_trail("background boot complete")
 	audio.play_voice("hello")
-	if crashed and SHOW_CRASH_TRAIL:
-		_show_diagnostics()
-	else:
-		await get_tree().create_timer(0.7).timeout
+	if not (crashed and SHOW_CRASH_TRAIL):
+		await get_tree().create_timer(0.4).timeout
 		_maybe_show_daily_login()
 
 # Draws one real board (with gold and shadow crystals and two rows of tubes) and
-# one avatar frame behind the cover so every shader is compiled before the first
-# level (otherwise the first level start stutters).
+# one avatar frame so every shader is compiled before the first level (otherwise
+# the first level start stutters). The home screen's opaque background hides it.
 func _warm_up() -> void:
+	_trail("warm-up begin")
 	var avatar := AvatarPortrait.new()
 	avatar.modulate = Color(1, 1, 1, 0.02)
 	overlay_root.add_child(avatar)
@@ -252,6 +260,7 @@ func _warm_up() -> void:
 		child.queue_free()
 	tubes.clear()
 	avatar.queue_free()
+	_trail("warm-up done")
 
 # Safe-area insets (status bar / camera cut-out / gesture bar) in canvas units.
 func _compute_insets() -> void:
@@ -302,7 +311,8 @@ func _enter(kind: UiScreen) -> void:
 	screen = null
 	hud = null
 	current_screen = kind
-	world.set_active(kind == UiScreen.GAME)
+	if world != null:
+		world.set_active(kind == UiScreen.GAME)
 	# The only banner left is on Level Select (none on Shop, Rewards or in play).
 	if kind == UiScreen.LEVELS:
 		platform.show_banner()
@@ -613,7 +623,8 @@ func _set_voice(v: bool) -> void:
 
 func _set_auto_camera(v: bool) -> void:
 	save.set_setting("auto_camera", v)
-	world.set_auto_camera(v)
+	if world != null:
+		world.set_auto_camera(v)
 
 func _restore() -> void:
 	if platform.has_billing():
@@ -635,7 +646,8 @@ func _do_reset() -> void:
 	audio.enabled = bool(save.data.sound)
 	audio.voice_enabled = bool(save.data.voice)
 	audio.set_music(bool(save.data.music))
-	world.set_auto_camera(bool(save.data.auto_camera))
+	if world != null:
+		world.set_auto_camera(bool(save.data.auto_camera))
 	show_home()
 	_toast("Progress reset")
 
@@ -791,10 +803,22 @@ func _create_hud() -> void:
 # LevelGen is deterministic: the same id is always the same board.
 func _load_level(id: int) -> void:
 	current_level = id
+	var t0 := Time.get_ticks_msec()
 	level_info = LevelGen.build(id)
 	caps = (level_info["caps"] as Array).duplicate()
+	_trail("level %d built in %d ms: %d colours, %d tubes x%d, twists %s, par %d, budget %d" % [id,
+		Time.get_ticks_msec() - t0, int(level_info["k"]), int(level_info["tubes"]),
+		int(level_info["capacity"]), str(level_info["twists"]), int(level_info["par"]), int(level_info["budget"])])
 
 func start_level(id: int) -> void:
+	if not _world_ready:
+		if _start_waiting:
+			return
+		_start_waiting = true
+		_toast("Preparing the table...")
+		while not _world_ready:
+			await get_tree().process_frame
+		_start_waiting = false
 	_trail("===== start_level(%d) begin =====" % id)
 	_load_level(id)
 	# a little help after failed tries on the same level
@@ -873,6 +897,7 @@ func _intro_twist_later() -> void:
 	if token != _level_token or current_screen != UiScreen.GAME or game_status != GameData.Status.PLAYING or is_instance_valid(_modal):
 		return
 	save.mark_twist_seen(fresh)
+	_trail("twist intro: " + fresh)
 	game_status = GameData.Status.PAUSED
 	_close_modal()
 	_modal = Modals.twist_intro(overlay_root, Twists.title_of(fresh), Twists.text_of(fresh), Twists.color_of(fresh), _pause_resume)
@@ -922,6 +947,7 @@ func _reveal_tops() -> void:
 		if (v & Rules.F_HIDDEN) != 0:
 			t[t.size() - 1] = v & (~Rules.F_HIDDEN)
 			_pending_reveals.append([i, t.size() - 1])
+			_trail("shadow crystal revealed: tube %d slot %d" % [i, t.size() - 1])
 
 # Old crystals leave the tree at once but are freed with queue_free(): freeing
 # the crystal whose tap signal is still being delivered is a use-after-free.
@@ -959,6 +985,7 @@ func _sync_visuals() -> void:
 		else:
 			tube_node.set_highlight(false)
 	_pending_reveals = []
+	_trail("sync: %d tubes, %d crystals" % [tubes.size(), Rules.count_crystals(tubes)])
 
 func _on_crystal_tapped(_crystal: Crystal3D, tube_index: int) -> void:
 	_on_tube_tapped(tube_index)
@@ -1022,6 +1049,7 @@ func _handle_tap(index: int) -> void:
 		return
 	if index < 0 or index >= tubes.size():
 		return
+	_trail("tap tube %d (selected %d)" % [index, selected])
 	_idle_time = 0.0
 	_idle_nudged = false
 	_idle_sleepy = false
@@ -1048,6 +1076,7 @@ func _move_gem(from_i: int, to_i: int, no_cost: bool = false) -> void:
 	if not Rules.can_move(tubes, caps, from_i, to_i):
 		_invalid_move()
 		return
+	_trail("move %d -> %d%s" % [from_i, to_i, " (hint)" if no_cost else ""])
 	world.cam_move(from_i, to_i)
 	world.pulse_camera(0.10)
 	hud.avatar.look_at_screen(world.tube_screen_pos(to_i))
@@ -1078,6 +1107,7 @@ func _on_clears(events: Array) -> void:
 	if events.is_empty():
 		combo = 0
 		return
+	_trail("clears x%d, combo %d" % [events.size(), combo + 1])
 	_spawn_pops(events)
 	var chain: int = events.size()
 	combo += 1
@@ -1204,6 +1234,7 @@ func _check_win_condition() -> void:
 		_lose("stuck")
 
 func _win() -> void:
+	_trail("level %d won" % current_level)
 	game_status = GameData.Status.WON
 	_dissolve_leftovers()
 	var t3: int = int(level_info["star3"])
@@ -1236,6 +1267,7 @@ func _win() -> void:
 	_show_result(true)
 
 func _lose(reason: String) -> void:
+	_trail("level %d lost: %s" % [current_level, reason])
 	game_status = GameData.Status.LOST
 	_lose_reason = reason
 	save.record_loss()
@@ -1270,6 +1302,7 @@ func _use_hint() -> void:
 	else:
 		save.spend_coins(HINT_COST)
 	_hints_used_level += 1
+	_trail("hint: %d -> %d" % [int(mv[0]), int(mv[1])])
 	_run_hint(mv)
 
 # The next move of the current plan, or a fresh search when the player went their own way.
@@ -1460,6 +1493,7 @@ func _add_tube() -> void:
 		_toast("Maximum %d tubes" % MAX_TUBES)
 		return
 	var cap: int = int(level_info["capacity"])
+	_trail("add tube (now %d)" % (tubes.size() + 1))
 	var old_positions := world.tube_positions()
 	tubes.append([])
 	caps.append(cap)
@@ -1508,6 +1542,7 @@ func _apply_crystal() -> void:
 		return
 	var ti: int = int(tgt[0])
 	var c: int = int(tgt[1])
+	_trail("crystal conjured on tube %d" % ti)
 	_busy = true
 	var token := _level_token
 	tubes[ti].append(c)
@@ -1564,6 +1599,7 @@ func _show_result(won: bool) -> void:
 		_maybe_offer_chest()
 
 func _build_result(won: bool) -> void:
+	_trail("result screen (won=%s)" % str(won))
 	_enter(UiScreen.RESULT)
 	save.refresh_lives()
 	var s := ResultScreen.new()

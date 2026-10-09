@@ -12,6 +12,7 @@ static var _mat_cache: Dictionary = {}
 static var _sel_mat_cache: Dictionary = {}
 static var _pick_shape: SphereShape3D = null
 static var _mystery_mat: StandardMaterial3D = null
+static var _orb: SphereMesh = null
 static var _halo_mesh: TorusMesh = null
 static var _halo_mat: StandardMaterial3D = null
 
@@ -80,6 +81,16 @@ static func _mystery_material() -> StandardMaterial3D:
 		_mystery_mat.emission_energy_multiplier = 0.55
 	return _mystery_mat
 
+# Shadow crystals are dark orbs, so they cannot be mistaken for coloured prisms.
+static func _orb_mesh() -> SphereMesh:
+	if _orb == null:
+		_orb = SphereMesh.new()
+		_orb.radius = 0.40
+		_orb.height = 0.80
+		_orb.radial_segments = 16
+		_orb.rings = 8
+	return _orb
+
 static func _halo_parts() -> void:
 	if _halo_mesh == null:
 		_halo_mesh = TorusMesh.new()
@@ -107,23 +118,12 @@ func setup(color_name: String, local_pos: Vector3, seed_phase: float, index: int
 	is_gold = (flags & Rules.F_GOLD) != 0
 
 	mesh = MeshInstance3D.new()
-	mesh.mesh = _mesh_for(color_name)
+	mesh.mesh = _orb_mesh() if is_hidden else _mesh_for(color_name)
 	mesh.rotation_degrees = Vector3(0, 30, 0)
 	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if is_hidden:
 		mesh.material_override = _mystery_material()
 	add_child(mesh)
-	if is_hidden:
-		var q := Label3D.new()
-		q.text = "?"
-		q.font_size = 96
-		q.pixel_size = 0.0085
-		q.outline_size = 10
-		q.modulate = Color(0.85, 0.8, 1.0)
-		q.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		q.no_depth_test = true
-		q.position = Vector3(0, 0.0, 0.5)
-		add_child(q)
 	if is_gold:
 		_halo_parts()
 		_halo = MeshInstance3D.new()
@@ -162,7 +162,7 @@ func set_selected(value: bool) -> void:
 func play_match_pop() -> void:
 	var tween := create_tween()
 	tween.tween_property(self, "scale", Vector3(1.4, 1.4, 1.4), 0.08)
-	tween.tween_property(self, "scale", Vector3.ZERO, 0.18)
+	tween.tween_property(self, "scale", Vector3(0.02, 0.02, 0.02), 0.18)
 	tween.tween_callback(queue_free)
 
 # A shadow crystal just surfaced: quick pop.

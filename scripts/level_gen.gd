@@ -520,7 +520,7 @@ static func _shuffle(rng: Array, a: Array) -> void:
 	var i: int = a.size() - 1
 	while i > 0:
 		var j: int = _rnd(rng, i + 1)
-		var tmp: int = a[i]
+		var tmp = a[i]
 		a[i] = a[j]
 		a[j] = tmp
 		i -= 1
