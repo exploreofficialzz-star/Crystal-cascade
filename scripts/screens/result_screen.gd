@@ -12,6 +12,9 @@ signal extra_tube_pressed
 signal free_tube_pressed
 signal double_coins_pressed
 signal watch_life_pressed
+signal bonus_gift_pressed
+
+var _pad: MarginContainer
 
 # Level-complete / game-over screen. Everything that earns money is surfaced
 # here: double the coins for a video, free moves or a free tube for a video, a
@@ -19,7 +22,8 @@ signal watch_life_pressed
 # readable on the busy victory artwork.
 #
 # info keys: won, reason ("moves" | "stuck"), stars, score, coins_earned, lives,
-# extra_moves_cost, extra_tube_cost, tube_available, rewarded_ready, total_coins, win_streak,
+# extra_moves_cost, extra_tube_cost, tube_available, rewarded_ready, bonus_ready, bonus_text,
+# total_coins, win_streak,
 # streak_bonus, level, theme_name, gold, cascades, chest_in, boss, next_level,
 # next_twists, next_boss
 func setup(info: Dictionary) -> void:
@@ -37,11 +41,11 @@ func setup(info: Dictionary) -> void:
 	if won:
 		_confetti()
 
-	var pad := Ui.margin(self, 60, 40 + int(Ui.inset_top), 60, 36 + int(Ui.inset_bottom))
+	_pad = Ui.margin(self, 60, 40 + int(Ui.inset_top), 60, 36 + int(Ui.inset_bottom))
 	var scroll := ScrollContainer.new()
 	Ui.full_rect(scroll)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	pad.add_child(scroll)
+	_pad.add_child(scroll)
 	var col := VBoxContainer.new()
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -110,6 +114,10 @@ func setup(info: Dictionary) -> void:
 
 	# ── actions ──
 	if won:
+		if bool(info.get("bonus_ready", false)):
+			var gift := Ui.pill_button(str(info.get("bonus_text", "FREE GIFT")), "pink", 128, 34, "gift")
+			gift.pressed.connect(func(): bonus_gift_pressed.emit())
+			col.add_child(gift)
 		if rewarded_ready:
 			var dbl := Ui.pill_button("WATCH VIDEO: DOUBLE COINS", "gold", 128, 36, "video")
 			dbl.pressed.connect(func(): double_coins_pressed.emit())
@@ -180,6 +188,11 @@ func setup(info: Dictionary) -> void:
 		col.add_child(tiles2)
 	col.add_child(Ui.vspace(10))
 	Ui.scroll_friendly(col)
+
+# Keeps the buttons clear of the sticky banner ad at the bottom of the screen.
+func set_bottom_reserve(px: int) -> void:
+	if _pad != null:
+		_pad.add_theme_constant_override("margin_bottom", 36 + int(Ui.inset_bottom) + px)
 
 # "Up next" teaser: curiosity is what brings people back for one more level.
 func _add_teaser(col: VBoxContainer, info: Dictionary) -> void:

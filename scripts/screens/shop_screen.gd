@@ -12,10 +12,11 @@ signal bonus_requested
 signal rewards_requested
 signal coins_for_hints_requested
 signal coins_for_lives_requested
+signal manage_subscription_requested
 
-const HINT_BUNDLE_COST := 100
+const HINT_BUNDLE_COST := 180
 const HINT_BUNDLE_COUNT := 3
-const LIFE_REFILL_COST := 60
+const LIFE_REFILL_COST := 90
 
 var save: SaveData
 var prices: Dictionary = {}
@@ -60,7 +61,7 @@ func setup(save_data: SaveData, price_map: Dictionary) -> void:
 	list.add_child(head)
 
 	list.add_child(_wallet())
-	if save.ads_seconds_left() > 0:
+	if save.ads_removed():
 		list.add_child(_ads_off_card())
 
 	var dot := Rewards.claimable(save)
@@ -88,17 +89,23 @@ func setup(save_data: SaveData, price_map: Dictionary) -> void:
 		"Get %d free hint" % ProductionConfig.REWARD_VIDEO_HINTS, "", _emit_watch_hint))
 	list.add_child(_item("bulb", Color("#ffe14d"), "%d Hints" % HINT_BUNDLE_COUNT, "Pay with coins",
 		"%d" % HINT_BUNDLE_COST, _emit_coins_hints, "", true, true))
-	list.add_child(_product("bulb", Ui.GOLD, "Hint Pack — Small", "5 hints, ready when you need them", "hint_pack_small"))
-	list.add_child(_product("bulb", Ui.GOLD, "Hint Pack — Large", "15 hints · best value", "hint_pack_large", "BEST VALUE"))
+	list.add_child(_product("bulb", Ui.GOLD, "Hint Pack — Small", Monetization.describe(Monetization.HINTS_SMALL), Monetization.HINTS_SMALL))
+	list.add_child(_product("bulb", Ui.GOLD, "Hint Pack — Large", "%s · best for stuck levels" % Monetization.describe(Monetization.HINTS_LARGE), Monetization.HINTS_LARGE, "5x MORE"))
 
 	list.add_child(Ui.section_title("Remove Ads"))
-	list.add_child(_product("sun", Color("#ffb347"), "Day Pass", "Ad-free for 24 hours", "remove_ads_day"))
-	list.add_child(_product("calendar", Ui.BLUE, "Weekend Pass", "Ad-free for 48 hours — great for binge sessions", "remove_ads_weekend"))
-	list.add_child(_product("moon", Ui.PURPLE, "Monthly Pass", "Ad-free for 30 days — best deal", "remove_ads_month", "BEST DEAL"))
+	if save.ads_subscription_flag():
+		list.add_child(_item("ad_free", Ui.GREEN, "Manage Subscription", "Change or cancel any time in Google Play", "", _emit_manage))
+	else:
+		list.add_child(_product("moon", Ui.PURPLE, "Ad-Free Monthly", "No banners or pop-up ads · renews monthly", Monetization.ADS_MONTHLY, "/ MONTH"))
+		list.add_child(_product("calendar", Ui.BLUE, "Ad-Free Annual", "Was %s · cancel any time · renews yearly" % ProductionConfig.ANNUAL_LIST_PRICE, Monetization.ADS_ANNUAL, "50% OFF"))
+		var fine := Ui.label("Subscriptions renew automatically until cancelled in Google Play. Videos you choose to watch for rewards stay available.", 22, Ui.TEXT_DIM, HORIZONTAL_ALIGNMENT_LEFT)
+		fine.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		fine.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		list.add_child(fine)
 
 	list.add_child(Ui.section_title("Coin Packs"))
-	list.add_child(_product("coin", Ui.GOLD, "Coin Pack", "500 coins + 5 hints", "coin_pack_starter"))
-	list.add_child(_product("diamond", Ui.BLUE, "Mega Pack", "2 000 coins + 20 hints + 48 h No Ads", "mega_pack", "POPULAR"))
+	list.add_child(_product("coin", Ui.GOLD, "Coin Pack", Monetization.describe(Monetization.COINS_STARTER), Monetization.COINS_STARTER))
+	list.add_child(_product("diamond", Ui.BLUE, "Mega Pack", Monetization.describe(Monetization.COINS_MEGA), Monetization.COINS_MEGA, "BEST VALUE"))
 	list.add_child(Ui.vspace(30))
 	Ui.scroll_friendly(list)
 
@@ -120,6 +127,9 @@ func set_scroll(v: int) -> void:
 
 func _emit_rewards() -> void:
 	rewards_requested.emit()
+
+func _emit_manage() -> void:
+	manage_subscription_requested.emit()
 
 func _emit_watch_coins() -> void:
 	watch_coins_requested.emit()
@@ -188,7 +198,10 @@ func _ads_off_card() -> Control:
 	row.add_theme_constant_override("separation", 18)
 	card.add_child(row)
 	row.add_child(Ui.icon("ad_free", 46, Ui.GREEN))
-	var l := Ui.label("Ads removed — %s left" % Ui.format_duration(save.ads_seconds_left()), 32, Ui.GREEN, HORIZONTAL_ALIGNMENT_LEFT, true)
+	var status := "Ads removed — thank you!"
+	if not save.ads_subscription_flag():
+		status = "Ads removed — %s left" % Ui.format_duration(save.ads_seconds_left())
+	var l := Ui.label(status, 32, Ui.GREEN, HORIZONTAL_ALIGNMENT_LEFT, true)
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(l)
 	return card

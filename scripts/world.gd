@@ -21,6 +21,7 @@ var _env: Environment
 var _fill_light: OmniLight3D
 var _rim_light: OmniLight3D
 var _backdrop_mat: StandardMaterial3D
+var _look: Dictionary = {}
 var _particle_mat: StandardMaterial3D
 var _burst_fx: CPUParticles3D
 
@@ -198,16 +199,22 @@ func _build_particles() -> void:
 	star_particles.emitting = true
 
 # Re-colours the sky, lights, backdrop and cloth for a level theme. Call before arrange().
-func apply_theme(index: int) -> void:
+func apply_theme(index: int, level: int = 1) -> void:
 	var t: Dictionary = THEMES[clampi(index, 0, THEMES.size() - 1)]
+	_look = LookBook.for_level(level, index)
+	var shift: float = float(_look["mood_shift"])
+	Crystal3D.cut_style = int(_look["cut"])
+	if director != null:
+		director.style_yaw = float(_look["cam_yaw"])
+		director.style_pitch = float(_look["cam_pitch"])
 	if _env != null:
-		_env.background_color = t["bg"]
-		_env.ambient_light_color = t["ambient"]
-		_env.fog_light_color = t["fog"]
+		_env.background_color = LookBook.shift_hue(t["bg"], shift)
+		_env.ambient_light_color = LookBook.shift_hue(t["ambient"], shift)
+		_env.fog_light_color = LookBook.shift_hue(t["fog"], shift)
 	if _fill_light != null:
-		_fill_light.light_color = t["fill"]
+		_fill_light.light_color = LookBook.shift_hue(t["fill"], shift)
 	if _rim_light != null:
-		_rim_light.light_color = t["rim"]
+		_rim_light.light_color = LookBook.shift_hue(t["rim"], shift)
 	if _backdrop_mat != null and _backdrop_mat.albedo_texture != null:
 		_backdrop_mat.albedo_color = t["tint"]
 	if _particle_mat != null:
@@ -287,7 +294,7 @@ func arrange(tube_count: int, capacity: int, intro: bool = true, old_positions: 
 		var p: Vector3 = pos[i]
 		var target := Vector3(p.x, base_y + p.y, p.z)
 		var tube := Tube3D.new()
-		tube.setup(i, capacity)
+		tube.setup(i, capacity, _look)
 		tube.position = target
 		tubes_root.add_child(tube)
 		if old_positions.size() > 0:
@@ -308,6 +315,10 @@ func arrange(tube_count: int, capacity: int, intro: bool = true, old_positions: 
 		director.play_intro()
 	elif old_positions.size() > 0:
 		cam_new_tube(tube_count - 1)
+
+func set_bottom_reserve(px: int) -> void:
+	if director != null:
+		director.set_bottom_reserve(float(px))
 
 func tube_positions() -> Array:
 	var out: Array = []

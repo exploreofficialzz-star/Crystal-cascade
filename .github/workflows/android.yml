@@ -19,10 +19,15 @@ env:
   GODOT_TEMPLATES_VERSION: "4.6.stable"
   ADMOB_VERSION: "v6.0"
   BILLING_VERSION: "3.3.0"
+  NOTIFICATIONS_VERSION: "v5.2"
   # Bundles the AdMob and Google Play Billing plugins into the app. Keep "true"
   # for production. (If a plugin ever breaks the build, set "false" to ship
   # without ads/purchases while you investigate.)
   ENABLE_MONETIZATION_PLUGINS: "true"
+  # Local reminder notifications (lives full, daily reward, streak, come-back).
+  # If this plugin ever breaks the build, set "false": the game then ships
+  # without reminders and everything else keeps working.
+  ENABLE_NOTIFICATION_PLUGIN: "true"
 
 jobs:
   build:
@@ -41,7 +46,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;28.1.13356709'
+          packages: 'platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0 ndk;28.1.13356709'
           accept-android-sdk-licenses: true
 
       - name: Install Android SDK packages
@@ -166,12 +171,47 @@ jobs:
           rm -rf addons/GodotGooglePlayBilling
           cp -R "$BILLING_DIR" addons/GodotGooglePlayBilling
 
+      - name: Install Notification Scheduler plugin (reminders)
+        if: env.ENABLE_NOTIFICATION_PLUGIN == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf /tmp/notif
+          mkdir -p /tmp/notif
+          for REPO in godot-mobile-plugins/godot-notification-scheduler godot-sdk-integrations/godot-notification-scheduler; do
+            gh release download "$NOTIFICATIONS_VERSION" --repo "$REPO" --dir /tmp/notif --pattern '*Android*.zip' && break
+            gh release download "$NOTIFICATIONS_VERSION" --repo "$REPO" --dir /tmp/notif --pattern '*.zip' && break
+          done
+          NOTIF_ZIP=$(find /tmp/notif -type f -name '*.zip' | head -1)
+          test -n "$NOTIF_ZIP"
+          rm -rf /tmp/notif/unpacked
+          mkdir -p /tmp/notif/unpacked
+          unzip -q "$NOTIF_ZIP" -d /tmp/notif/unpacked
+          NOTIF_DIR=$(find /tmp/notif/unpacked -type d -path '*addons/NotificationSchedulerPlugin' | head -1)
+          test -n "$NOTIF_DIR"
+          rm -rf addons/NotificationSchedulerPlugin
+          mkdir -p addons
+          cp -R "$NOTIF_DIR" addons/NotificationSchedulerPlugin
+          NOTIF_ASSETS=$(find /tmp/notif/unpacked -type d -path '*assets/NotificationSchedulerPlugin' | head -1)
+          if [ -n "$NOTIF_ASSETS" ]; then
+            rm -rf assets/NotificationSchedulerPlugin
+            mkdir -p assets
+            cp -R "$NOTIF_ASSETS" assets/NotificationSchedulerPlugin
+          fi
+          test -f addons/NotificationSchedulerPlugin/plugin.cfg
+          echo "Notification Scheduler plugin installed"
+
       - name: Enable monetization plugins
         if: env.ENABLE_MONETIZATION_PLUGINS == 'true'
         run: |
           test -f addons/AdmobPlugin/plugin.cfg
           test -f addons/GodotGooglePlayBilling/plugin.cfg
-          printf '\n[editor_plugins]\n\nenabled=PackedStringArray("res://addons/AdmobPlugin/plugin.cfg", "res://addons/GodotGooglePlayBilling/plugin.cfg")\n' >> project.godot
+          PLUGINS='"res://addons/AdmobPlugin/plugin.cfg", "res://addons/GodotGooglePlayBilling/plugin.cfg"'
+          if [ -f addons/NotificationSchedulerPlugin/plugin.cfg ]; then
+            PLUGINS="$PLUGINS, \"res://addons/NotificationSchedulerPlugin/plugin.cfg\""
+          fi
+          printf '\n[editor_plugins]\n\nenabled=PackedStringArray(%s)\n' "$PLUGINS" >> project.godot
           tail -5 project.godot
 
       - name: Import and validate Godot project
@@ -216,6 +256,16 @@ jobs:
           godot --headless --path . --export-release "Android AAB" build/CrystalCascade.aab
           test -s build/CrystalCascade.apk
           test -s build/CrystalCascade.aab
+
+      - name: Show permissions declared by the final app (for the Play Console forms)
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          AAPT2=$(ls "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$AAPT2" ]; then
+            "$AAPT2" dump permissions build/CrystalCascade.apk || true
+          fi
 
       - name: Remove decoded keystore
         if: always()

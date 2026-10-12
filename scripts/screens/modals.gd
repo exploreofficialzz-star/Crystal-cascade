@@ -200,7 +200,7 @@ static func daily_login(parent: Control, day: int, reward_text: String, reward_i
 # Treasure chest after every third win (and a bigger one after every boss level).
 static func chest(parent: Control, reward_text: String, reward_icon: String,
 		can_double: bool, on_collect: Callable, on_double: Callable,
-		title: String = "TREASURE CHEST!", sub: String = "You cleared 3 levels. Here is your prize:") -> Control:
+		title: String = "TREASURE CHEST!", sub: String = "You cleared a few levels in a row. Here is your prize:") -> Control:
 	var ov := _base(parent, 0.84)
 	var box := _box(ov)
 	var hero := Ui.icon("chest", 170, Color("#ffcf5a"))
@@ -274,4 +274,173 @@ static func twist_intro(parent: Control, title: String, text: String, accent: Co
 	var ok := Ui.pill_button("LET'S GO", "pink", 128, 42, "play")
 	ok.pressed.connect(_wrap(ov, on_close))
 	box.add_child(ok)
+	return ov
+
+# +CRYSTAL: pick which colour to conjure (only colours on the board are offered).
+# options: [{"idx": int, "color": Color, "name": String, "enabled": bool}, ...]
+# on_coins / on_watch receive the chosen colour index.
+static func crystal_picker(parent: Control, options: Array, coin_text: String, coin_enabled: bool,
+		watch_enabled: bool, per_ad: int, on_coins: Callable, on_watch: Callable,
+		on_shop: Callable, on_tasks: Callable, on_cancel: Callable) -> Control:
+	var ov := _base(parent, 0.82)
+	var box := _box(ov)
+	var accent := Color("#7ef0ff")
+	var badge := PanelContainer.new()
+	badge.custom_minimum_size = Vector2(130, 130)
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	badge.add_theme_stylebox_override("panel", Ui.flat(Color(accent, 0.25), 70, Color(accent, 0.6), 3, 0, 0))
+	var cc := CenterContainer.new()
+	badge.add_child(cc)
+	cc.add_child(Ui.icon("diamond", 74, accent))
+	box.add_child(badge)
+	box.add_child(Ui.label("CONJURE CRYSTALS", 54, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(_text("Pick a colour from your board. It lands on a matching crystal and finishes the match."))
+
+	var state := {"sel": -1}
+	var chips: Array = []
+	var name_label := Ui.label("", 34, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 14)
+	box.add_child(row)
+	for opt in options:
+		var o: Dictionary = opt
+		var chip := PanelContainer.new()
+		chip.custom_minimum_size = Vector2(96, 96)
+		var enabled: bool = bool(o.get("enabled", true))
+		if enabled and int(state["sel"]) < 0:
+			state["sel"] = int(o["idx"])
+		chips.append({"panel": chip, "idx": int(o["idx"]), "color": o["color"], "name": str(o["name"]), "enabled": enabled})
+		row.add_child(chip)
+	var refresh := func() -> void:
+		for c in chips:
+			var cd: Dictionary = c
+			var picked: bool = int(cd["idx"]) == int(state["sel"])
+			var col: Color = cd["color"]
+			if not bool(cd["enabled"]):
+				col = Color(col.r, col.g, col.b, 0.28)
+			var panel: PanelContainer = cd["panel"]
+			panel.add_theme_stylebox_override("panel", Ui.flat(col, 52, Color.WHITE if picked else Color(1, 1, 1, 0.25), 6 if picked else 2, 0, 0))
+			if picked:
+				name_label.text = str(cd["name"])
+	for c in chips:
+		var cd: Dictionary = c
+		if bool(cd["enabled"]):
+			var idx: int = int(cd["idx"])
+			var choose := func() -> void:
+				state["sel"] = idx
+				refresh.call()
+			Ui.make_tappable(cd["panel"], 52, choose)
+	refresh.call()
+	box.add_child(name_label)
+
+	var coins := Ui.pill_button(coin_text, "gold", 128, 38, "coin")
+	coins.disabled = not coin_enabled or int(state["sel"]) < 0
+	var coins_go := func() -> void:
+		if is_instance_valid(ov):
+			ov.queue_free()
+		if on_coins.is_valid():
+			on_coins.call(int(state["sel"]))
+	coins.pressed.connect(coins_go)
+	box.add_child(coins)
+	if not coin_enabled:
+		box.add_child(Ui.label("Not enough coins", 28, Ui.RED))
+	var watch := Ui.pill_button("WATCH VIDEO: +%d CRYSTALS" % per_ad if watch_enabled else "Video not ready", "pink", 128, 38, "video")
+	watch.disabled = not watch_enabled or int(state["sel"]) < 0
+	var watch_go := func() -> void:
+		if is_instance_valid(ov):
+			ov.queue_free()
+		if on_watch.is_valid():
+			on_watch.call(int(state["sel"]))
+	watch.pressed.connect(watch_go)
+	box.add_child(watch)
+	if not coin_enabled:
+		var more := HBoxContainer.new()
+		more.add_theme_constant_override("separation", 14)
+		var shop := Ui.glass_button("Shop", Ui.GOLD, 100, 32, "bag")
+		shop.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		shop.pressed.connect(_wrap(ov, on_shop))
+		more.add_child(shop)
+		var tasks := Ui.glass_button("Daily Tasks", Ui.BLUE, 100, 32, "gift")
+		tasks.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tasks.pressed.connect(_wrap(ov, on_tasks))
+		more.add_child(tasks)
+		box.add_child(more)
+	var cancel := Ui.glass_button("Cancel", Ui.GREY, 108, 34)
+	cancel.pressed.connect(_wrap(ov, on_cancel))
+	box.add_child(cancel)
+	return ov
+
+# Welcome back after a few days away.
+static func comeback(parent: Control, away_days: int, reward_text: String, can_double: bool,
+		on_claim: Callable, on_double: Callable) -> Control:
+	var ov := _base(parent, 0.84)
+	var box := _box(ov)
+	var hero := Ui.icon("gift", 150, Color("#7ef0ff"))
+	hero.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(hero)
+	box.add_child(Ui.label("WELCOME BACK!", 58, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(_text("The crystals missed you for %d days. Here is a little thank-you:" % away_days))
+	box.add_child(Ui.label(reward_text, 52, Ui.GOLD, HORIZONTAL_ALIGNMENT_CENTER, true))
+	var claim := Ui.pill_button("CLAIM", "pink", 132, 44, "gift")
+	claim.pressed.connect(_wrap(ov, on_claim))
+	box.add_child(claim)
+	if can_double:
+		var dbl := Ui.pill_button("WATCH VIDEO: DOUBLE IT", "gold", 120, 34, "video")
+		dbl.pressed.connect(_wrap(ov, on_double))
+		box.add_child(dbl)
+	return ov
+
+# Soft ask shown once before the system notification permission prompt.
+static func reminders_ask(parent: Control, on_yes: Callable, on_no: Callable) -> Control:
+	var ov := _base(parent, 0.84)
+	var box := _box(ov)
+	var hero := Ui.icon("clock", 130, Color("#ffb347"))
+	hero.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(hero)
+	box.add_child(Ui.label("STAY IN THE LOOP?", 54, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(_text("Get a nudge when your lives are full, your daily reward is ready or your streak is at risk. No spam. Change it any time in Settings."))
+	var yes := Ui.pill_button("YES, REMIND ME", "pink", 132, 44, "check")
+	yes.pressed.connect(_wrap(ov, on_yes))
+	box.add_child(yes)
+	var no := Ui.glass_button("Not now", Ui.GREY, 108, 34)
+	no.pressed.connect(_wrap(ov, on_no))
+	box.add_child(no)
+	return ov
+
+# Daily gift pick: three sealed gifts, tap one (on_pick gets 0..2).
+static func gift_pick(parent: Control, free_pick: bool, on_pick: Callable, on_close: Callable) -> Control:
+	var ov := _base(parent, 0.86)
+	var box := _box(ov)
+	box.add_child(Ui.label("DAILY GIFT", 58, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true))
+	box.add_child(_text("Pick one sealed gift!" if free_pick else "Watch a video to open another gift."))
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 22)
+	box.add_child(row)
+	var accents := [Color("#ff7ad9"), Color("#7ef0ff"), Color("#ffd34e")]
+	for i in range(3):
+		var card := PanelContainer.new()
+		card.custom_minimum_size = Vector2(230, 260)
+		card.add_theme_stylebox_override("panel", Ui.flat(Color(accents[i], 0.16), 40, Color(accents[i], 0.9), 4, 20, 20))
+		var v := VBoxContainer.new()
+		v.alignment = BoxContainer.ALIGNMENT_CENTER
+		v.add_theme_constant_override("separation", 10)
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(v)
+		var ic := Ui.icon("gift", 120, accents[i])
+		ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		v.add_child(ic)
+		v.add_child(Ui.label("TAP", 30, accents[i], HORIZONTAL_ALIGNMENT_CENTER, true))
+		var idx: int = i
+		var pick_go := func() -> void:
+			if is_instance_valid(ov):
+				ov.queue_free()
+			if on_pick.is_valid():
+				on_pick.call(idx)
+		Ui.make_tappable(card, 40, pick_go)
+		row.add_child(card)
+	var close := Ui.glass_button("Close", Ui.GREY, 108, 34)
+	close.pressed.connect(_wrap(ov, on_close))
+	box.add_child(close)
 	return ov

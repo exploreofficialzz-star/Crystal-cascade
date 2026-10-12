@@ -28,6 +28,13 @@ var camera: Camera3D
 var auto_enabled := true
 var orbit := Vector2.ZERO
 var rows_pitch := 0.0
+# Canvas pixels at the bottom taken by the sticky banner ad (it lifts the booster bar).
+var bottom_reserve := 0.0
+# Cosmetic per-level angle bias (see LookBook).
+var style_yaw := 0.0
+var style_pitch := 0.0
+
+var _cfg: Dictionary = {}
 
 var _center := Vector3(0, 3.0, 0)
 var _focus := Vector3(0, 3.0, 0)
@@ -61,6 +68,7 @@ func _ready() -> void:
 
 # half_w: half the width of the tube rows (incl. tube radius); height: tube height.
 func configure(center_y: float, half_w: float, height: float, rows: int = 1, snap_now: bool = true) -> void:
+	_cfg = {"y": center_y, "w": half_w, "h": height, "rows": rows}
 	# Look slightly above the board centre so the board sits below the HUD.
 	_center = Vector3(0.0, center_y + (1.8 if rows > 1 else 0.7), 0.0)
 	_focus = _center
@@ -73,6 +81,12 @@ func configure(center_y: float, half_w: float, height: float, rows: int = 1, sna
 	var need := (half_w + 1.0) / (t * aspect)
 	var dist_h := height * 0.75 / t + 2.0
 	_base_dist = maxf(17.6, maxf(need * 1.06, dist_h))
+	# Room for the banner strip: pull back a little and slide the board up so the
+	# lowest tubes stay clear of the lifted booster bar.
+	if bottom_reserve > 0.0:
+		_base_dist *= 1.0 + 0.8 * clampf(bottom_reserve / 1040.0, 0.0, 0.3)
+		_center.y -= bottom_reserve * (2.0 * _base_dist * t / 1920.0) * 0.5
+		_focus = _center
 	# closest allowed zoom that still keeps every tube on screen
 	_min_mul = clampf(need / _base_dist, 0.8, 1.0)
 	if not snap_now:
@@ -86,10 +100,18 @@ func configure(center_y: float, half_w: float, height: float, rows: int = 1, sna
 	_shot_t = 0.0
 	snap()
 
+# Called when the banner ad appears / disappears; the camera glides to the new framing.
+func set_bottom_reserve(px: float) -> void:
+	if is_equal_approx(px, bottom_reserve):
+		return
+	bottom_reserve = px
+	if not _cfg.is_empty():
+		configure(float(_cfg["y"]), float(_cfg["w"]), float(_cfg["h"]), int(_cfg["rows"]), false)
+
 func snap() -> void:
 	var s: Array = SHOTS[0]
-	_cur_yaw = float(s[0])
-	_cur_pitch = float(s[1]) + rows_pitch
+	_cur_yaw = float(s[0]) + style_yaw
+	_cur_pitch = float(s[1]) + rows_pitch + style_pitch
 	_cur_dist = _base_dist * maxf(float(s[2]), _min_mul)
 	_cur_focus = _focus
 	_apply(0.0)
@@ -204,8 +226,8 @@ func _apply(delta: float) -> void:
 
 	_rate = lerpf(_rate, rate_t, clampf(delta * 3.0, 0.0, 1.0))
 	var k := 1.0 - exp(-delta * _rate) if delta > 0.0 else 1.0
-	_cur_yaw = lerpf(_cur_yaw, base.x + orbit.x, k)
-	_cur_pitch = lerpf(_cur_pitch, base.y + orbit.y, k)
+	_cur_yaw = lerpf(_cur_yaw, base.x + orbit.x + style_yaw, k)
+	_cur_pitch = lerpf(_cur_pitch, base.y + orbit.y + style_pitch, k)
 	_cur_dist = lerpf(_cur_dist, _base_dist * base.z, k)
 	var kf := 1.0 - exp(-delta * 4.0) if delta > 0.0 else 1.0
 	_cur_focus = _cur_focus.lerp(focus_t, kf)

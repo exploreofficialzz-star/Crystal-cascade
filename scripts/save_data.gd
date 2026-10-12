@@ -4,22 +4,25 @@ extends Node
 const PATH := "user://crystal_cascade_save.json"
 const MAX_LIVES := 5
 const LIFE_REGEN_SECONDS := 30 * 60
-const DAILY_BONUS := 50
+const DAILY_BONUS := 25
+const SUB_GRACE_SECONDS := 45 * 86400
 const INT_KEYS := [
 	"coins", "hints", "lives", "last_life_time", "total_stars",
 	"highest_unlocked", "daily_bonus_time", "remove_ads_expiry",
 	"login_streak", "login_last_claim", "quest_day", "win_streak",
 	"wins_since_chest", "total_matches", "total_wins",
+	"ads_sub_checked", "ao_day", "ao_count", "last_played_day", "comeback_day",
+	"bonus_wins", "pick_day", "sessions", "first_day",
 ]
-const CHEST_EVERY := 3
+const CHEST_EVERY := 4
 
 var data: Dictionary = _default_data()
 
 # Single source of truth for defaults (reset_all() used to keep its own copy).
 static func _default_data() -> Dictionary:
 	return {
-		"coins": 25,
-		"hints": 1,
+		"coins": 30,
+		"hints": 3,
 		"lives": 5,
 		"last_life_time": 0,
 		"total_stars": 0,
@@ -43,6 +46,18 @@ static func _default_data() -> Dictionary:
 		"daily_bonus_time": 0,
 		"remove_ads_tier": "none",
 		"remove_ads_expiry": 0,
+		"ads_sub_active": false,
+		"ads_sub_checked": 0,
+		"ao_day": -1,
+		"ao_count": 0,
+		"notifications": true,
+		"notif_asked": false,
+		"last_played_day": -1,
+		"comeback_day": -1,
+		"bonus_wins": 0,
+		"pick_day": -1,
+		"sessions": 0,
+		"first_day": -1,
 		"levels": {},
 		"fails": {},
 		"seen_twists": [],
@@ -142,6 +157,7 @@ func seconds_to_daily_bonus() -> int:
 	var now := int(Time.get_unix_time_from_system())
 	return maxi(0, 86400 - (now - int(data.daily_bonus_time)))
 
+# Seconds left on an old time-limited ad-free pass (subscriptions have no end date here).
 func ads_seconds_left() -> int:
 	return maxi(0, int(data.remove_ads_expiry) - int(Time.get_unix_time_from_system()))
 
@@ -328,8 +344,39 @@ func set_setting(key: String, value: bool) -> void:
 	data[key] = value
 	save()
 
+# Ad-free while an old pass is running or while the Google Play subscription is
+# active. The subscription flag is re-checked against Google Play on every launch.
 func ads_removed() -> bool:
-	return int(data.remove_ads_expiry) > int(Time.get_unix_time_from_system())
+	var now := int(Time.get_unix_time_from_system())
+	if int(data.remove_ads_expiry) > now:
+		return true
+	return bool(data.ads_sub_active) and now - int(data.ads_sub_checked) < SUB_GRACE_SECONDS
+
+func ads_subscription_flag() -> bool:
+	return bool(data.ads_sub_active)
+
+func set_ads_subscription(active: bool) -> void:
+	data.ads_sub_active = active
+	data.ads_sub_checked = int(Time.get_unix_time_from_system()) if active else 0
+	save()
+
+func touch_ads_subscription() -> void:
+	if bool(data.ads_sub_active):
+		data.ads_sub_checked = int(Time.get_unix_time_from_system())
+		save()
+
+# App-open ad daily cap.
+func app_open_allowed(max_per_day: int) -> bool:
+	if int(data.ao_day) != today():
+		return true
+	return int(data.ao_count) < max_per_day
+
+func app_open_shown() -> void:
+	if int(data.ao_day) != today():
+		data.ao_day = today()
+		data.ao_count = 0
+	data.ao_count = int(data.ao_count) + 1
+	save()
 
 func set_remove_ads(tier: String, seconds: int) -> void:
 	data.remove_ads_tier = tier
@@ -351,6 +398,54 @@ func mark_processed_purchase(token: String) -> void:
 	if tokens.size() > 100:
 		tokens = tokens.slice(tokens.size() - 100)
 	data["processed_purchase_tokens"] = tokens
+	save()
+
+# ── retention: sessions, comeback, bonus gift pacing ─────────────────────────
+
+# Called once per app launch. Returns whole days since the player last played
+# (0 on a same-day return, -1 on the very first launch).
+func begin_session() -> int:
+	var t := today()
+	var away := -1
+	if int(data.last_played_day) >= 0:
+		away = maxi(0, t - int(data.last_played_day))
+	if int(data.first_day) < 0:
+		data.first_day = t
+	data.sessions = int(data.sessions) + 1
+	data.last_played_day = t
+	save()
+	return away
+
+# Days since the first launch (0 = install day).
+func days_since_install() -> int:
+	if int(data.first_day) < 0:
+		return 0
+	return maxi(0, today() - int(data.first_day))
+
+func comeback_available(away_days: int) -> bool:
+	return away_days >= 2 and int(data.comeback_day) != today()
+
+func comeback_claimed() -> void:
+	data.comeback_day = today()
+	save()
+
+# Level-complete "bonus gift" (rewarded interstitial) is offered every few wins.
+func bonus_gift_due(every: int) -> bool:
+	return int(data.bonus_wins) >= every
+
+func bonus_gift_note_win() -> void:
+	data.bonus_wins = int(data.bonus_wins) + 1
+	save()
+
+func bonus_gift_reset() -> void:
+	data.bonus_wins = 0
+	save()
+
+func pick_available() -> bool:
+	return int(data.pick_day) != today()
+
+func pick_claimed() -> void:
+	data.pick_day = today()
 	save()
 
 func reset_all() -> void:

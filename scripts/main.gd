@@ -5,13 +5,16 @@ extends Node3D
 # Screens live in scripts/screens, widgets in scripts/ui, the ad/billing bridge
 # in scripts/services/android_platform.gd.
 
-const HINT_COST := 40
-const EXTRA_MOVES_COST := 30
-const EXTRA_TUBE_COST := 100
-const CRYSTAL_COST := 60
-const LEVEL_COMPLETE_COINS := 5
-const MATCH_COINS := 2
-const GOLD_COINS := 8
+# Economy (see ProductionConfig for the ad/reward side). Power-up prices are the
+# base values at level 10 and rise gently with the level (_cost()).
+const HINT_COST := 70
+const EXTRA_MOVES_COST := 50
+const EXTRA_TUBE_COST := 160
+const CRYSTAL_COST := 100
+const LEVEL_COMPLETE_COINS := 2
+const MATCH_COINS := 1
+const GOLD_COINS := 3
+const CHAIN_COINS := 2
 const MAX_TUBES := 10
 const NUDGE_AFTER := 14.0
 const SLEEPY_AFTER := 40.0
@@ -89,81 +92,37 @@ var _chest_boss := false
 var _plan: Array = []
 var _plan_keys: Array = []
 var _pending_reveals: Array = []
-
-# ── Crash trail (diagnostics) ─────────────────────────────────────────────────
-# Every risky step is written to a small file and flushed immediately. Hidden in
-# production: in Settings tap "Version" 7 times to open the viewer. Set
-# SHOW_CRASH_TRAIL to true to show the previous run's trail automatically.
-const SHOW_CRASH_TRAIL := true
-const CRASH_LOG_PATH := "user://crash_trail.txt"
-const MARK_CLEAN := "=== SESSION ENDED CLEANLY ==="
-const MARK_PAUSED := "=== APP PAUSED ==="
-const MARK_RESUMED := "=== APP RESUMED ==="
-var _trail_file: FileAccess = null
-var _prev_trail_text := ""
-
-func _open_trail() -> void:
-	_trail_file = FileAccess.open(CRASH_LOG_PATH, FileAccess.WRITE)
-
-func _trail(msg: String) -> void:
-	print("[CC-DEBUG] " + msg)
-	if _trail_file:
-		_trail_file.store_line("%d | %s" % [Time.get_ticks_msec(), msg])
-		_trail_file.flush()
-
-func _read_trail_file() -> String:
-	if not FileAccess.file_exists(CRASH_LOG_PATH):
-		return ""
-	var f := FileAccess.open(CRASH_LOG_PATH, FileAccess.READ)
-	if f == null:
-		return ""
-	var content := f.get_as_text()
-	f.close()
-	return content
-
-# A session counts as a crash unless its LAST line is a clean-exit / paused marker.
-func _trail_is_crash(content: String) -> bool:
-	var lines := content.strip_edges().split("\n")
-	if lines.size() == 0 or lines[0] == "":
-		return false
-	var last := lines[lines.size() - 1]
-	return not (last.ends_with(MARK_CLEAN) or last.ends_with(MARK_PAUSED))
-
-func _log_environment() -> void:
-	_trail("build %s, godot %s" % [ProductionConfig.VERSION_NAME, str(Engine.get_version_info().get("string", "?"))])
-	_trail("os %s, model %s" % [OS.get_name(), OS.get_model_name()])
-	_trail("gpu %s, vendor %s" % [RenderingServer.get_video_adapter_name(), RenderingServer.get_video_adapter_vendor()])
-	_trail("static mem %d MB" % (OS.get_static_memory_usage() / 1048576))
-
-func _trail_after_draw(tag: String) -> void:
-	await RenderingServer.frame_post_draw
-	_trail("frame drawn after %s" % tag)
+var _away_days := -1
+var _paused_msec := 0
+var _start_open_pending := true
+var _boot_msec := 0
+var _notifier: Notifier = null
+var _comeback_wait := false
+var _gift_wait := false
+var _pick_wait := false
+var _crystal_pick := -1
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_WM_CLOSE_REQUEST:
-		_trail(MARK_CLEAN)
-	elif what == NOTIFICATION_APPLICATION_PAUSED:
+	if what == NOTIFICATION_APPLICATION_PAUSED:
+		_paused_msec = Time.get_ticks_msec()
 		if save:
 			save.save()
-		_trail(MARK_PAUSED)
+		_schedule_reminders()
 	elif what == NOTIFICATION_APPLICATION_RESUMED:
-		_trail(MARK_RESUMED)
 		if save:
 			save.refresh_lives()
+		_on_app_resumed()
 	elif what == NOTIFICATION_WM_GO_BACK_REQUEST:
 		_handle_back()
 
 # ── Launch sequence ───────────────────────────────────────────────────────────
 
 func _ready() -> void:
-	_prev_trail_text = _read_trail_file()
-	var crashed := _trail_is_crash(_prev_trail_text)
-	_open_trail()
-	_trail("main._ready begin")
-	_log_environment()
+	_boot_msec = Time.get_ticks_msec()
 	_compute_insets()
 	save = SaveData.new()
 	add_child(save)
+	_away_days = save.begin_session()
 	audio = AudioManager.new()
 	add_child(audio)
 	audio.enabled = bool(save.data.sound)
@@ -174,10 +133,8 @@ func _ready() -> void:
 	# The home screen is built right here, before the first frame: the engine's
 	# boot splash is the only splash and it hands over straight to the menu.
 	show_home()
-	_trail("home screen shown")
 	await get_tree().process_frame
-	await _boot_background(crashed)
-	_trail("main._ready complete")
+	await _boot_background()
 
 func _asset_paths() -> Array:
 	var paths: Array = []
@@ -196,7 +153,6 @@ func _asset_paths() -> Array:
 func _make_platform() -> void:
 	platform = AndroidPlatform.new()
 	add_child(platform)
-	platform.diagnostic.connect(_trail)
 	platform.rewarded_earned.connect(_on_rewarded_earned)
 	platform.rewarded_cancelled.connect(_on_rewarded_cancelled)
 	platform.purchase_completed.connect(_on_purchase_completed)
@@ -204,13 +160,13 @@ func _make_platform() -> void:
 	platform.restore_finished.connect(_on_restore_finished)
 	platform.prices_updated.connect(_on_prices_updated)
 	platform.banner_height_changed.connect(_on_banner_height)
+	platform.entitlement_changed.connect(_on_entitlement_changed)
+	platform.app_open_ready.connect(_try_start_app_open)
 
 # Everything the home screen does not need is prepared AFTER it is on screen:
 # remaining art and sound, the 3D world, ads/billing and a shader warm-up. If
 # PLAY is tapped before this finishes, start_level() waits for it.
-func _boot_background(crashed: bool) -> void:
-	if crashed and SHOW_CRASH_TRAIL:
-		_show_diagnostics()
+func _boot_background() -> void:
 	var paths := _asset_paths()
 	for i in range(paths.size()):
 		Ui.tex(paths[i])
@@ -221,30 +177,29 @@ func _boot_background(crashed: bool) -> void:
 		if i % 6 == 5:
 			await get_tree().process_frame
 	await get_tree().process_frame
-	_trail("background: world.build() begin")
 	world = GameWorld.new()
 	add_child(world)
 	world.build()
 	world.set_active(false)
 	world.set_auto_camera(bool(save.data.auto_camera))
-	_trail("background: world.build() returned")
 	platform.setup(save)
+	_notifier = Notifier.new()
+	add_child(_notifier)
+	_notifier.setup(save)
 	await get_tree().process_frame
 	await _warm_up()
 	audio.load_music()
 	audio.set_music(bool(save.data.music))
 	_world_ready = true
-	_trail("background boot complete")
 	audio.play_voice("hello")
-	if not (crashed and SHOW_CRASH_TRAIL):
-		await get_tree().create_timer(0.4).timeout
-		_maybe_show_daily_login()
+	await get_tree().create_timer(0.4).timeout
+	_launch_popups()
+	_try_start_app_open()
 
 # Draws one real board (with gold and shadow crystals and two rows of tubes) and
 # one avatar frame so every shader is compiled before the first level (otherwise
 # the first level start stutters). The home screen's opaque background hides it.
 func _warm_up() -> void:
-	_trail("warm-up begin")
 	var avatar := AvatarPortrait.new()
 	avatar.modulate = Color(1, 1, 1, 0.02)
 	overlay_root.add_child(avatar)
@@ -260,7 +215,6 @@ func _warm_up() -> void:
 		child.queue_free()
 	tubes.clear()
 	avatar.queue_free()
-	_trail("warm-up done")
 
 # Safe-area insets (status bar / camera cut-out / gesture bar) in canvas units.
 func _compute_insets() -> void:
@@ -313,8 +267,9 @@ func _enter(kind: UiScreen) -> void:
 	current_screen = kind
 	if world != null:
 		world.set_active(kind == UiScreen.GAME)
-	# The only banner left is on Level Select (none on Shop, Rewards or in play).
-	if kind == UiScreen.LEVELS:
+	# One sticky banner on Level Select, in play and on Level Complete / Game Over.
+	# Moving between those screens never hides or reloads it.
+	if kind == UiScreen.LEVELS or kind == UiScreen.GAME or kind == UiScreen.RESULT:
 		platform.show_banner()
 	else:
 		platform.hide_banner()
@@ -322,14 +277,115 @@ func _enter(kind: UiScreen) -> void:
 func _attach(s: Control) -> void:
 	screen_root.add_child(s)
 	screen = s
+	_apply_banner_reserve()
+	# setup() runs right after attach: apply the banner space again once the screen is built.
+	_apply_banner_reserve.call_deferred()
 
 func _apply_banner_reserve() -> void:
 	if screen != null and screen.has_method("set_bottom_reserve"):
 		screen.call("set_bottom_reserve", _banner_reserve)
+	if world != null:
+		world.set_bottom_reserve(_banner_reserve if current_screen == UiScreen.GAME else 0)
 
 func _on_banner_height(px: int) -> void:
 	_banner_reserve = px
 	_apply_banner_reserve()
+
+# ── Launch popups, app-open ad, reminders ────────────────────────────────────
+
+# First things the player sees: a welcome-back gift after a few days away,
+# otherwise the daily login reward.
+func _launch_popups() -> void:
+	if current_screen != UiScreen.HOME or is_instance_valid(_modal):
+		return
+	if save.comeback_available(_away_days):
+		_show_comeback()
+	else:
+		_maybe_show_daily_login()
+
+func _show_comeback() -> void:
+	var r: Dictionary = Rewards.comeback_reward(_away_days)
+	audio.play("ui_chime")
+	_modal = Modals.comeback(overlay_root, _away_days, Rewards.describe(r), platform.is_rewarded_ready(), _claim_comeback, _comeback_double)
+
+func _claim_comeback() -> void:
+	_do_comeback(1)
+
+func _do_comeback(mult: int) -> void:
+	var r: Dictionary = Rewards.comeback_reward(_away_days)
+	save.comeback_claimed()
+	for _i in range(mult):
+		Rewards.grant(save, r)
+	audio.play("streak_up")
+	audio.play_voice("yay")
+	_toast("Welcome back! %s%s" % [Rewards.describe(r), "  (x2!)" if mult > 1 else ""])
+	if current_screen == UiScreen.HOME:
+		show_home()
+		_maybe_show_daily_login()
+
+func _comeback_double() -> void:
+	_comeback_wait = true
+	if not platform.show_rewarded("comeback_double"):
+		_comeback_wait = false
+		_toast("No video available. Claimed normally.")
+		_do_comeback(1)
+
+# App-open ad right after launch: only once the ad is ready, only on the home
+# screen, and only for players past the first levels (the platform checks that).
+func _try_start_app_open() -> void:
+	if not _start_open_pending or current_screen != UiScreen.HOME:
+		return
+	if Time.get_ticks_msec() - _boot_msec > 25000:
+		_start_open_pending = false
+		return
+	if platform.try_app_open():
+		_start_open_pending = false
+
+# Back from the background: menus are always a fine moment, the game screen
+# only sometimes (and never in the middle of an animation).
+func _on_app_resumed() -> void:
+	if _notifier != null:
+		_notifier.cancel_all()
+	if platform == null or not _world_ready:
+		return
+	platform.refresh_entitlements()
+	var away_s := (Time.get_ticks_msec() - _paused_msec) / 1000
+	if away_s < ProductionConfig.APP_OPEN_MIN_AWAY_SECONDS:
+		return
+	var ok := false
+	match current_screen:
+		UiScreen.HOME, UiScreen.LEVELS, UiScreen.SHOP, UiScreen.REWARDS, UiScreen.SETTINGS:
+			ok = true
+		UiScreen.GAME:
+			ok = game_status != GameData.Status.WON and not _busy and randf() < ProductionConfig.APP_OPEN_IN_GAME_CHANCE
+		_:
+			ok = false
+	if ok:
+		platform.try_app_open()
+
+# Local reminders that bring players back (lives full, daily reward, streak).
+func _schedule_reminders() -> void:
+	if _notifier != null and save != null and bool(save.data.notifications):
+		_notifier.schedule_all()
+
+# One soft question before the system permission prompt, asked once, right after
+# the player's first win (when they are happiest).
+func _maybe_ask_reminders() -> void:
+	if _notifier == null or not _notifier.is_available() or bool(save.data.notif_asked):
+		return
+	if int(save.data.total_wins) < 2 or not bool(save.data.notifications):
+		return
+	await get_tree().create_timer(1.6).timeout
+	if current_screen != UiScreen.RESULT or is_instance_valid(_modal):
+		return
+	save.data.notif_asked = true
+	save.save()
+	_modal = Modals.reminders_ask(overlay_root, _enable_reminders, Callable())
+
+func _enable_reminders() -> void:
+	if _notifier != null:
+		_notifier.request_permission()
+		_toast("Reminders on")
 
 # ── HOME ──────────────────────────────────────────────────────────────────────
 
@@ -368,7 +424,6 @@ func show_levels() -> void:
 	s.setup(save)
 	s.back_pressed.connect(show_home)
 	s.level_selected.connect(start_level)
-	_apply_banner_reserve()
 
 # ── SHOP ──────────────────────────────────────────────────────────────────────
 
@@ -387,6 +442,7 @@ func show_shop() -> void:
 	s.rewards_requested.connect(show_rewards)
 	s.coins_for_hints_requested.connect(_buy_hints)
 	s.coins_for_lives_requested.connect(_refill_lives)
+	s.manage_subscription_requested.connect(platform.open_manage_subscription)
 
 # Rebuilds the shop but keeps the scroll position.
 func _refresh_shop() -> void:
@@ -430,10 +486,22 @@ func _purchase(product_id: String) -> void:
 	if platform.purchase(product_id):
 		_toast("Opening Google Play…")
 
-func _on_purchase_completed(_product_id: String) -> void:
+func _on_purchase_completed(product_id: String) -> void:
 	audio.play("coin")
-	_toast("Purchase complete!")
+	if Monetization.is_subscription(product_id):
+		_toast("Ads removed. Thank you!")
+	else:
+		_toast("Purchase complete: %s" % Monetization.describe(product_id))
 	_refresh_shop()
+
+# The ad-free subscription started or ended (checked against Google Play).
+func _on_entitlement_changed() -> void:
+	if current_screen == UiScreen.SHOP:
+		_refresh_shop()
+	if save.ads_removed():
+		platform.hide_banner()
+	elif current_screen == UiScreen.LEVELS or current_screen == UiScreen.GAME or current_screen == UiScreen.RESULT:
+		platform.show_banner()
 
 func _on_purchase_failed(_product_id: String, message: String) -> void:
 	_toast(message)
@@ -459,6 +527,35 @@ func show_rewards() -> void:
 	s.claim_login_pressed.connect(_claim_login_hub)
 	s.claim_quest_pressed.connect(_claim_quest)
 	s.claim_milestone_pressed.connect(_claim_milestone)
+	s.gift_pick_pressed.connect(_on_gift_pick_pressed)
+
+# Daily gift: one free pick of three sealed gifts, extra picks for a video.
+func _on_gift_pick_pressed() -> void:
+	if save.pick_available():
+		_open_gift_pick(true)
+		return
+	_pick_wait = true
+	if not platform.show_rewarded("gift_pick"):
+		_pick_wait = false
+		_toast("No video available right now. Your next free gift is tomorrow!")
+
+func _open_gift_pick(free: bool) -> void:
+	_close_modal()
+	audio.play("ui_chime")
+	_modal = Modals.gift_pick(overlay_root, free, _on_gift_picked.bind(free), Callable())
+
+func _on_gift_picked(index: int, free: bool) -> void:
+	var salt := 0 if free else 1 + randi() % 5
+	var gifts: Array = Rewards.pick_gifts(save.today() + salt)
+	var r: Dictionary = gifts[clampi(index, 0, gifts.size() - 1)]
+	if free:
+		save.pick_claimed()
+	Rewards.grant(save, r)
+	audio.play("chest_open")
+	audio.play_voice("yay")
+	_toast("Gift: %s" % Rewards.describe(r))
+	if current_screen == UiScreen.REWARDS:
+		_refresh_rewards()
 
 func _refresh_rewards() -> void:
 	if current_screen != UiScreen.REWARDS or screen == null:
@@ -544,14 +641,14 @@ func _roll_chest(boss: bool = false) -> Dictionary:
 	var r := randf()
 	if boss:
 		if r < 0.55:
-			return {"type": "coins", "amount": 120 + 20 * (randi() % 7)}
+			return {"type": "coins", "amount": 50 + 10 * (randi() % 7)}
 		if r < 0.85:
-			return {"type": "hints", "amount": 4}
-		return {"type": "lives", "amount": 2}
+			return {"type": "hints", "amount": 2}
+		return {"type": "lives", "amount": 1}
 	if r < 0.6:
-		return {"type": "coins", "amount": 40 + 10 * (randi() % 7)}
+		return {"type": "coins", "amount": 20 + 5 * (randi() % 7)}
 	if r < 0.85:
-		return {"type": "hints", "amount": 2}
+		return {"type": "hints", "amount": 1}
 	return {"type": "lives", "amount": 1}
 
 func _maybe_offer_chest() -> void:
@@ -566,7 +663,7 @@ func _maybe_offer_chest() -> void:
 	_chest_reward = _roll_chest(boss)
 	audio.play("chest_open")
 	var title := "BOSS CHEST!" if boss else "TREASURE CHEST!"
-	var sub := "Boss defeated! Here is your prize:" if boss else "You cleared 3 levels. Here is your prize:"
+	var sub := "Boss defeated! Here is your prize:" if boss else "You cleared %d levels. Here is your prize:" % SaveData.CHEST_EVERY
 	_modal = Modals.chest(overlay_root, Rewards.describe(_chest_reward),
 		Rewards.icon_for(str(_chest_reward["type"])), platform.is_rewarded_ready(), _collect_chest, _double_chest, title, sub)
 
@@ -601,7 +698,8 @@ func show_settings() -> void:
 	s.restore_pressed.connect(_restore)
 	s.reset_pressed.connect(_confirm_reset)
 	s.privacy_pressed.connect(_open_privacy)
-	s.diagnostics_requested.connect(_show_diagnostics)
+	s.notifications_toggled.connect(_set_notifications)
+	s.manage_subscription_pressed.connect(platform.open_manage_subscription)
 
 func _set_sound(v: bool) -> void:
 	save.set_setting("sound", v)
@@ -625,6 +723,15 @@ func _set_auto_camera(v: bool) -> void:
 	save.set_setting("auto_camera", v)
 	if world != null:
 		world.set_auto_camera(v)
+
+func _set_notifications(v: bool) -> void:
+	save.set_setting("notifications", v)
+	if _notifier == null:
+		return
+	if v:
+		_notifier.request_permission()
+	else:
+		_notifier.cancel_all()
 
 func _restore() -> void:
 	if platform.has_billing():
@@ -651,42 +758,6 @@ func _do_reset() -> void:
 	show_home()
 	_toast("Progress reset")
 
-# Hidden diagnostics viewer (Settings > tap Version 7 times).
-func _show_diagnostics() -> void:
-	_close_modal()
-	var text := "=== PREVIOUS SESSION ===\n%s\n=== THIS SESSION ===\n%s" % [_prev_trail_text, _read_trail_file()]
-	var ov := ColorRect.new()
-	Ui.full_rect(ov)
-	ov.color = Color(0.02, 0.02, 0.07, 0.98)
-	overlay_root.add_child(ov)
-	_modal = ov
-	var pad := Ui.margin(ov, 40, 60 + int(Ui.inset_top), 40, 40 + int(Ui.inset_bottom))
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 18)
-	pad.add_child(box)
-	box.add_child(Ui.label("DIAGNOSTICS", 46, Ui.GOLD, HORIZONTAL_ALIGNMENT_CENTER, true))
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	box.add_child(scroll)
-	var log_label := Label.new()
-	log_label.text = text
-	log_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	log_label.add_theme_font_size_override("font_size", 22)
-	log_label.add_theme_color_override("font_color", Color("#9dffb0"))
-	log_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	scroll.add_child(log_label)
-	var copy := Ui.pill_button("COPY LOG", "purple", 120, 38)
-	copy.pressed.connect(_copy_text.bind(text))
-	box.add_child(copy)
-	var close := Ui.glass_button("Close", Ui.GREY, 110, 36)
-	close.pressed.connect(_close_modal)
-	box.add_child(close)
-
-func _copy_text(text: String) -> void:
-	DisplayServer.clipboard_set(text)
-	_toast("Log copied")
-
 # ── Android back button ───────────────────────────────────────────────────────
 
 func _handle_back() -> void:
@@ -707,7 +778,6 @@ func _handle_back() -> void:
 		UiScreen.HOME:
 			var now := Time.get_ticks_msec()
 			if now < _back_armed_until_ms:
-				_trail(MARK_CLEAN)
 				get_tree().quit()
 			else:
 				_back_armed_until_ms = now + 2000
@@ -732,6 +802,12 @@ func _on_rewarded_cancelled() -> void:
 		_chest_wait = false
 		_collect_chest()
 		return
+	if _comeback_wait:
+		_comeback_wait = false
+		_do_comeback(1)
+		return
+	_gift_wait = false
+	_pick_wait = false
 	if _pending_pu != "":
 		_pu_cancel()
 	_toast("Watch the whole video to get the reward")
@@ -773,6 +849,18 @@ func _on_rewarded_earned(kind: String) -> void:
 			_chest_wait = false
 			Rewards.grant(save, _chest_reward)
 			_collect_chest()
+		"comeback_double":
+			_comeback_wait = false
+			_do_comeback(2)
+		"bonus_gift":
+			_claim_bonus_reward()
+		"gift_pick":
+			_pick_wait = false
+			_open_gift_pick(false)
+		"crystals":
+			_pending_pu = ""
+			_pause_resume()
+			_apply_crystal(_crystal_pick, ProductionConfig.REWARD_CRYSTALS_PER_AD, true)
 		_:
 			save.add_coins(ProductionConfig.REWARD_VIDEO_COINS)
 			_toast("+%d coins" % ProductionConfig.REWARD_VIDEO_COINS)
@@ -781,7 +869,7 @@ func _on_rewarded_earned(kind: String) -> void:
 # Interstitial (if pacing allows) and then start the level.
 func _start_after_ad(id: int) -> void:
 	var go := func(): start_level(id)
-	if platform.try_interstitial(go):
+	if platform.try_interstitial(go, int(save.data.highest_unlocked)):
 		return
 	go.call()
 
@@ -799,16 +887,13 @@ func _create_hud() -> void:
 	hud.voice_requested.connect(_on_voice)
 	hud.avatar_poked.connect(_on_avatar_poked)
 	hud.set_level_info(str(level_info.get("name", "")), level_info.get("twists", []))
+	hud.set_costs(_costs_dict())
 
 # LevelGen is deterministic: the same id is always the same board.
 func _load_level(id: int) -> void:
 	current_level = id
-	var t0 := Time.get_ticks_msec()
 	level_info = LevelGen.build(id)
 	caps = (level_info["caps"] as Array).duplicate()
-	_trail("level %d built in %d ms: %d colours, %d tubes x%d, twists %s, par %d, budget %d" % [id,
-		Time.get_ticks_msec() - t0, int(level_info["k"]), int(level_info["tubes"]),
-		int(level_info["capacity"]), str(level_info["twists"]), int(level_info["par"]), int(level_info["budget"])])
 
 func start_level(id: int) -> void:
 	if not _world_ready:
@@ -819,7 +904,6 @@ func start_level(id: int) -> void:
 		while not _world_ready:
 			await get_tree().process_frame
 		_start_waiting = false
-	_trail("===== start_level(%d) begin =====" % id)
 	_load_level(id)
 	# a little help after failed tries on the same level
 	var bonus: int = mini(6, save.fail_count(id) * 2)
@@ -857,8 +941,6 @@ func start_level(id: int) -> void:
 		_show_tutorial()
 	else:
 		_intro_twist_later()
-	_trail("===== start_level(%d) complete =====" % id)
-	_trail_after_draw("start_level(%d)" % id)
 
 # Banner with the level, its theme and twists, plus a line from Cass.
 func _announce_level(bonus: int) -> void:
@@ -897,24 +979,20 @@ func _intro_twist_later() -> void:
 	if token != _level_token or current_screen != UiScreen.GAME or game_status != GameData.Status.PLAYING or is_instance_valid(_modal):
 		return
 	save.mark_twist_seen(fresh)
-	_trail("twist intro: " + fresh)
 	game_status = GameData.Status.PAUSED
 	_close_modal()
 	_modal = Modals.twist_intro(overlay_root, Twists.title_of(fresh), Twists.text_of(fresh), Twists.color_of(fresh), _pause_resume)
 
 func _make_board() -> void:
-	_trail("_make_board begin")
 	tubes.clear()
 	for t in (level_info["board"] as Array):
 		tubes.append((t as Array).duplicate())
 	caps = (level_info["caps"] as Array).duplicate()
 	var cap: int = int(level_info["capacity"])
-	_trail("_make_board: %d tubes, capacity %d, %d crystals" % [tubes.size(), cap, Rules.count_crystals(tubes)])
-	world.apply_theme(int(level_info["theme"]))
+	world.apply_theme(int(level_info["theme"]), current_level)
 	world.arrange(tubes.size(), cap, true)
 	_connect_tubes()
 	_sync_visuals()
-	_trail("_make_board complete")
 
 func _connect_tubes() -> void:
 	var count := world.tubes_root.get_child_count()
@@ -947,7 +1025,6 @@ func _reveal_tops() -> void:
 		if (v & Rules.F_HIDDEN) != 0:
 			t[t.size() - 1] = v & (~Rules.F_HIDDEN)
 			_pending_reveals.append([i, t.size() - 1])
-			_trail("shadow crystal revealed: tube %d slot %d" % [i, t.size() - 1])
 
 # Old crystals leave the tree at once but are freed with queue_free(): freeing
 # the crystal whose tap signal is still being delivered is a use-after-free.
@@ -985,7 +1062,6 @@ func _sync_visuals() -> void:
 		else:
 			tube_node.set_highlight(false)
 	_pending_reveals = []
-	_trail("sync: %d tubes, %d crystals" % [tubes.size(), Rules.count_crystals(tubes)])
 
 func _on_crystal_tapped(_crystal: Crystal3D, tube_index: int) -> void:
 	_on_tube_tapped(tube_index)
@@ -1049,7 +1125,6 @@ func _handle_tap(index: int) -> void:
 		return
 	if index < 0 or index >= tubes.size():
 		return
-	_trail("tap tube %d (selected %d)" % [index, selected])
 	_idle_time = 0.0
 	_idle_nudged = false
 	_idle_sleepy = false
@@ -1076,7 +1151,6 @@ func _move_gem(from_i: int, to_i: int, no_cost: bool = false) -> void:
 	if not Rules.can_move(tubes, caps, from_i, to_i):
 		_invalid_move()
 		return
-	_trail("move %d -> %d%s" % [from_i, to_i, " (hint)" if no_cost else ""])
 	world.cam_move(from_i, to_i)
 	world.pulse_camera(0.10)
 	hud.avatar.look_at_screen(world.tube_screen_pos(to_i))
@@ -1107,7 +1181,6 @@ func _on_clears(events: Array) -> void:
 	if events.is_empty():
 		combo = 0
 		return
-	_trail("clears x%d, combo %d" % [events.size(), combo + 1])
 	_spawn_pops(events)
 	var chain: int = events.size()
 	combo += 1
@@ -1129,10 +1202,8 @@ func _on_clears(events: Array) -> void:
 		if k == 0:
 			first_pos = world.tube_screen_pos(ti)
 	if chain >= 2:
-		coins_now += 5 * (chain - 1)
+		coins_now += CHAIN_COINS * (chain - 1)
 		score += 100 * (chain - 1)
-	if combo >= 3:
-		coins_now += combo
 	save.add_coins(coins_now)
 	coins_earned += coins_now
 	_gold_collected += gold_now
@@ -1234,7 +1305,6 @@ func _check_win_condition() -> void:
 		_lose("stuck")
 
 func _win() -> void:
-	_trail("level %d won" % current_level)
 	game_status = GameData.Status.WON
 	_dissolve_leftovers()
 	var t3: int = int(level_info["star3"])
@@ -1250,10 +1320,11 @@ func _win() -> void:
 	var streak := save.record_win()
 	_streak_bonus = 0
 	if streak >= 2:
-		_streak_bonus = mini(5 * streak, 25)
+		_streak_bonus = mini(streak, 5)
 		save.add_coins(_streak_bonus)
 		coins_earned += _streak_bonus
 	save.quest_add("win", 1)
+	save.bonus_gift_note_win()
 	save.quest_add("stars", stars)
 	if stars == 3:
 		save.quest_add("perfect", 1)
@@ -1267,7 +1338,6 @@ func _win() -> void:
 	_show_result(true)
 
 func _lose(reason: String) -> void:
-	_trail("level %d lost: %s" % [current_level, reason])
 	game_status = GameData.Status.LOST
 	_lose_reason = reason
 	save.record_loss()
@@ -1286,11 +1356,27 @@ func _lose(reason: String) -> void:
 # No popup: a stored hint is used first, then coins. When both are gone, offer a
 # video, the shop or the daily tasks. The move is then played automatically and
 # does not cost one of the level's moves.
+# Power-up prices climb gently with the level (x1.0 at level 10 up to x1.8 at
+# level 100) so a pile of coins never makes the game trivial.
+func _price_factor() -> float:
+	return 1.0 + 0.8 * clampf(float(current_level - 10) / 90.0, 0.0, 1.0)
+
+func _cost(base: int) -> int:
+	return roundi(float(base) * _price_factor() / 5.0) * 5
+
+func _costs_dict() -> Dictionary:
+	return {
+		"hint": _cost(HINT_COST),
+		"moves": _cost(EXTRA_MOVES_COST),
+		"tube": _cost(EXTRA_TUBE_COST),
+		"crystal": _cost(CRYSTAL_COST),
+	}
+
 func _use_hint() -> void:
 	if game_status != GameData.Status.PLAYING or hud == null or _busy:
 		return
 	var has_hint: bool = int(save.data.hints) > 0
-	if not has_hint and int(save.data.coins) < HINT_COST:
+	if not has_hint and int(save.data.coins) < _cost(HINT_COST):
 		_offer_more_hints()
 		return
 	var mv: Array = _hint_move()
@@ -1300,9 +1386,8 @@ func _use_hint() -> void:
 	if has_hint:
 		save.use_hint()
 	else:
-		save.spend_coins(HINT_COST)
+		save.spend_coins(_cost(HINT_COST))
 	_hints_used_level += 1
-	_trail("hint: %d -> %d" % [int(mv[0]), int(mv[1])])
 	_run_hint(mv)
 
 # The next move of the current plan, or a fresh search when the player went their own way.
@@ -1403,8 +1488,8 @@ func _open_powerup(kind: String) -> void:
 	if kind == "tube" and tubes.size() >= MAX_TUBES:
 		_toast("Maximum %d tubes" % MAX_TUBES)
 		return
-	if kind == "crystal" and _crystal_target().is_empty():
-		_toast("No room for a crystal right now")
+	if kind == "crystal":
+		_open_crystal_picker()
 		return
 	var icon_name := "moves"
 	var accent := Ui.PINK
@@ -1416,21 +1501,14 @@ func _open_powerup(kind: String) -> void:
 		"moves":
 			title = "Out of moves?"
 			desc = "+%d moves keep you in the game." % ProductionConfig.REWARD_EXTRA_MOVES
-			cost = EXTRA_MOVES_COST
+			cost = _cost(EXTRA_MOVES_COST)
 			coin_text = "Use %d coins" % cost
 		"tube":
 			icon_name = "tube"
 			accent = Ui.BLUE
 			title = "Add an extra tube?"
 			desc = "A fresh, full-size empty tube gives you room to sort."
-			cost = EXTRA_TUBE_COST
-			coin_text = "Use %d coins" % cost
-		"crystal":
-			icon_name = "diamond"
-			accent = Ui.GREEN
-			title = "Conjure a crystal?"
-			desc = "Cass adds a crystal that finishes a pair, so it clears at once."
-			cost = CRYSTAL_COST
+			cost = _cost(EXTRA_TUBE_COST)
 			coin_text = "Use %d coins" % cost
 	var can_pay := cost <= 0 or int(save.data.coins) >= cost
 	game_status = GameData.Status.PAUSED
@@ -1449,11 +1527,9 @@ func _pu_coins() -> void:
 	var ok := false
 	match kind:
 		"moves":
-			ok = save.spend_coins(EXTRA_MOVES_COST)
+			ok = save.spend_coins(_cost(EXTRA_MOVES_COST))
 		"tube":
-			ok = save.spend_coins(EXTRA_TUBE_COST)
-		"crystal":
-			ok = save.spend_coins(CRYSTAL_COST)
+			ok = save.spend_coins(_cost(EXTRA_TUBE_COST))
 	_pause_resume()
 	if ok:
 		_apply_powerup(kind)
@@ -1483,7 +1559,9 @@ func _apply_powerup(kind: String) -> void:
 		"tube":
 			_add_tube()
 		"crystal":
-			_apply_crystal()
+			var tgt: Array = _crystal_target()
+			if not tgt.is_empty():
+				_apply_crystal(int(tgt[1]), 1)
 
 # New tubes are appended at the end of the layout, always with the full capacity
 # of the level; existing tubes glide to their new places and the new one drops in
@@ -1493,7 +1571,6 @@ func _add_tube() -> void:
 		_toast("Maximum %d tubes" % MAX_TUBES)
 		return
 	var cap: int = int(level_info["capacity"])
-	_trail("add tube (now %d)" % (tubes.size() + 1))
 	var old_positions := world.tube_positions()
 	tubes.append([])
 	caps.append(cap)
@@ -1535,30 +1612,116 @@ func _top_gem(tube_index: int) -> Crystal3D:
 			return kids[k] as Crystal3D
 	return null
 
-func _apply_crystal() -> void:
-	var tgt: Array = _crystal_target()
-	if tgt.is_empty():
+# The tube where a conjured crystal of `color` helps most (a pair it completes,
+# otherwise a single it grows into a pair), or -1 when that colour has no room.
+func _crystal_target_for(color: int) -> int:
+	var best := -1
+	var best_score := -1
+	for i in range(tubes.size()):
+		var t: Array = tubes[i]
+		if t.is_empty() or t.size() >= int(caps[i]):
+			continue
+		if (int(t[t.size() - 1]) & 15) != color:
+			continue
+		var run: int = Rules.top_run(t)
+		if run != 1 and run != 2:
+			continue
+		var sc: int = run * 100 + Rules.count_color(tubes, color)
+		if sc > best_score:
+			best_score = sc
+			best = i
+	return best
+
+# Colours on the board for the picker (hidden shadow crystals stay secret).
+func _crystal_options() -> Array:
+	var seen: Dictionary = {}
+	for t in tubes:
+		for v in (t as Array):
+			var crystal: int = int(v)
+			if (crystal & Rules.F_HIDDEN) != 0:
+				continue
+			seen[crystal & 15] = true
+	var keys: Array = seen.keys()
+	keys.sort()
+	var out: Array = []
+	for k in keys:
+		var idx: int = int(k)
+		var cname := _color_name(idx)
+		out.append({
+			"idx": idx,
+			"color": _crystal_color(idx),
+			"name": str(GameData.COLOR_NAMES.get(cname, cname.capitalize())),
+			"enabled": _crystal_target_for(idx) >= 0,
+		})
+	return out
+
+func _open_crystal_picker() -> void:
+	var options := _crystal_options()
+	var any_enabled := false
+	for o in options:
+		if bool((o as Dictionary)["enabled"]):
+			any_enabled = true
+	if not any_enabled:
 		_toast("No room for a crystal right now")
 		return
-	var ti: int = int(tgt[0])
-	var c: int = int(tgt[1])
-	_trail("crystal conjured on tube %d" % ti)
+	var cost := _cost(CRYSTAL_COST)
+	game_status = GameData.Status.PAUSED
+	_pending_pu = "crystal"
+	_close_modal()
+	_modal = Modals.crystal_picker(overlay_root, options, "%d  ·  +1 CRYSTAL" % cost,
+		int(save.data.coins) >= cost, platform.is_rewarded_ready(), ProductionConfig.REWARD_CRYSTALS_PER_AD,
+		_crystal_with_coins, _crystal_with_video, _open_sub_from_game.bind("shop"),
+		_open_sub_from_game.bind("rewards"), _pu_cancel)
+
+func _crystal_with_coins(color: int) -> void:
+	_pending_pu = ""
+	if _crystal_target_for(color) < 0:
+		_pause_resume()
+		_toast("No room for that colour right now")
+		return
+	if not save.spend_coins(_cost(CRYSTAL_COST)):
+		_pause_resume()
+		_toast("Not enough coins. Watch a video instead!")
+		return
+	_pause_resume()
+	_apply_crystal(color, 1)
+
+func _crystal_with_video(color: int) -> void:
+	_crystal_pick = color
+	if not platform.show_rewarded("crystals"):
+		_pending_pu = ""
+		_pause_resume()
+		_toast("No video available right now. Try coins!")
+
+# Conjures up to `count` crystals of one colour, one after another; each lands on
+# the best matching tube, so a 3-in-1 video can finish several matches.
+func _apply_crystal(color: int, count: int, _from_video: bool = false) -> void:
+	if _crystal_target_for(color) < 0:
+		_toast("No room for that colour right now")
+		return
 	_busy = true
 	var token := _level_token
-	tubes[ti].append(c)
-	_sync_visuals()
-	var gem := _top_gem(ti)
-	if gem != null:
-		gem.play_spawn()
-	audio.play("tube_drop")
 	_cass("A little sparkle!", "wink", "wow")
-	await get_tree().create_timer(0.55).timeout
-	if token != _level_token:
-		return
-	var events: Array = Rules.resolve_tube(tubes, ti)
-	_on_clears(events)
-	_sync_visuals()
-	_refresh_hud()
+	for _n in range(count):
+		var ti := _crystal_target_for(color)
+		if ti < 0:
+			break
+		tubes[ti].append(color)
+		_sync_visuals()
+		var gem := _top_gem(ti)
+		if gem != null:
+			gem.play_spawn()
+		audio.play("tube_drop")
+		await get_tree().create_timer(0.55).timeout
+		if token != _level_token:
+			return
+		var events: Array = Rules.resolve_tube(tubes, ti)
+		_on_clears(events)
+		_sync_visuals()
+		_refresh_hud()
+		await get_tree().create_timer(0.3).timeout
+		if token != _level_token:
+			return
 	_busy = false
 	_check_win_condition()
 
@@ -1597,9 +1760,9 @@ func _show_result(won: bool) -> void:
 	_build_result(won)
 	if won:
 		_maybe_offer_chest()
+		_maybe_ask_reminders()
 
 func _build_result(won: bool) -> void:
-	_trail("result screen (won=%s)" % str(won))
 	_enter(UiScreen.RESULT)
 	save.refresh_lives()
 	var s := ResultScreen.new()
@@ -1613,10 +1776,12 @@ func _build_result(won: bool) -> void:
 		"score": score,
 		"coins_earned": coins_earned,
 		"lives": int(save.data.lives),
-		"extra_moves_cost": EXTRA_MOVES_COST,
-		"extra_tube_cost": EXTRA_TUBE_COST,
+		"extra_moves_cost": _cost(EXTRA_MOVES_COST),
+		"extra_tube_cost": _cost(EXTRA_TUBE_COST),
 		"tube_available": tubes.size() < MAX_TUBES,
 		"rewarded_ready": can_watch,
+		"bonus_ready": _bonus_gift_ready(won),
+		"bonus_text": "FREE GIFT: +%d COINS +%d HINT" % [ProductionConfig.BONUS_GIFT_COINS, ProductionConfig.BONUS_GIFT_HINTS],
 		"total_coins": int(save.data.coins),
 		"win_streak": int(save.data.win_streak),
 		"streak_bonus": _streak_bonus,
@@ -1641,6 +1806,32 @@ func _build_result(won: bool) -> void:
 	s.free_tube_pressed.connect(_watch.bind("tube"))
 	s.double_coins_pressed.connect(_watch.bind("double"))
 	s.watch_life_pressed.connect(_watch.bind("life"))
+	s.bonus_gift_pressed.connect(_claim_bonus_gift)
+
+# The rewarded-interstitial gift is only offered when the ad is ready, after a win,
+# every few wins and never during the very first levels.
+func _bonus_gift_ready(won: bool) -> bool:
+	if not won or _gift_wait:
+		return false
+	if int(save.data.highest_unlocked) < ProductionConfig.BONUS_GIFT_MIN_LEVEL:
+		return false
+	return save.bonus_gift_due(ProductionConfig.BONUS_GIFT_EVERY_WINS) and platform.is_bonus_ready()
+
+func _claim_bonus_gift() -> void:
+	_gift_wait = true
+	if not platform.show_bonus("bonus_gift"):
+		_gift_wait = false
+		_toast("Gift video isn't ready. Try again in a moment!")
+
+func _claim_bonus_reward() -> void:
+	_gift_wait = false
+	save.add_coins(ProductionConfig.BONUS_GIFT_COINS)
+	save.add_hints(ProductionConfig.BONUS_GIFT_HINTS)
+	save.bonus_gift_reset()
+	audio.play("coin")
+	_toast("Gift: +%d coins, +%d hint" % [ProductionConfig.BONUS_GIFT_COINS, ProductionConfig.BONUS_GIFT_HINTS])
+	if current_screen == UiScreen.RESULT and game_status == GameData.Status.WON:
+		_build_result(true)
 
 func _retry_with_life() -> void:
 	if save.use_life():
@@ -1654,16 +1845,18 @@ func _show_no_lives() -> void:
 		platform.is_rewarded_ready(), _watch.bind("life"), Callable())
 
 func _buy_extra_moves() -> void:
-	if save.spend_coins(EXTRA_MOVES_COST):
+	var cost := _cost(EXTRA_MOVES_COST)
+	if save.spend_coins(cost):
 		_resume_with_moves(ProductionConfig.REWARD_EXTRA_MOVES)
 	else:
-		_toast("You need %d coins" % EXTRA_MOVES_COST)
+		_toast("You need %d coins. Watch a video for free moves!" % cost)
 
 func _buy_extra_tube() -> void:
-	if save.spend_coins(EXTRA_TUBE_COST):
+	var cost := _cost(EXTRA_TUBE_COST)
+	if save.spend_coins(cost):
 		_resume_lost("tube")
 	else:
-		_toast("You need %d coins" % EXTRA_TUBE_COST)
+		_toast("You need %d coins. Watch a video for a free tube!" % cost)
 
 func _resume_with_moves(count: int) -> void:
 	_resume_lost("moves", count)

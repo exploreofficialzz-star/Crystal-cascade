@@ -1,48 +1,96 @@
 class_name Monetization
-extends Node
+extends RefCounted
 
-# Production-safe abstraction. It never grants a paid item until a native
-# Android/iOS store adapter reports a verified purchase/reward callback.
+# Product catalogue: the single source of truth for what the store sells.
+# The Play Console product ids must match these exactly.
+#
+#   Subscriptions (auto-renewing, one base plan each):
+#     ads_free_monthly   $0.99 / month
+#     ads_free_annual    $5.00 / year   (50% off the $10 list price)
+#   One-time consumables:
+#     hint_pack_small    100 hints                    $0.45
+#     hint_pack_large    500 hints                    $0.99
+#     coin_pack_starter  1,000 coins + 50 hints       $0.50
+#     mega_pack          10,000 coins + 200 hints     $0.99
 
-const PRODUCT_IDS := {
-    "remove_ads_day": "remove_ads_day",
-    "remove_ads_weekend": "remove_ads_weekend",
-    "remove_ads_month": "remove_ads_month",
-    "hint_pack_small": "hint_pack_small",
-    "hint_pack_large": "hint_pack_large",
-    "coin_pack_starter": "coin_pack_starter",
-    "mega_pack": "mega_pack"
+const ADS_MONTHLY := "ads_free_monthly"
+const ADS_ANNUAL := "ads_free_annual"
+const HINTS_SMALL := "hint_pack_small"
+const HINTS_LARGE := "hint_pack_large"
+const COINS_STARTER := "coin_pack_starter"
+const COINS_MEGA := "mega_pack"
+
+const SUBSCRIPTION_IDS := [ADS_MONTHLY, ADS_ANNUAL]
+
+# Base-plan ids to create in Play Console (used if Google does not report them).
+const DEFAULT_BASE_PLANS := {ADS_MONTHLY: "monthly", ADS_ANNUAL: "annual"}
+const CONSUMABLE_IDS := [HINTS_SMALL, HINTS_LARGE, COINS_STARTER, COINS_MEGA]
+
+# Time-limited ad-free passes that are no longer sold. A pass that was bought
+# earlier and is still unclaimed on the Play account is still honoured.
+const LEGACY_PASS_SECONDS := {
+	"remove_ads_day": 24 * 60 * 60,
+	"remove_ads_weekend": 48 * 60 * 60,
+	"remove_ads_month": 30 * 24 * 60 * 60,
 }
 
-signal purchase_requested(product_id: String)
-signal rewarded_requested(reward_type: String)
+const GRANTS := {
+	HINTS_SMALL: {"hints": 100},
+	HINTS_LARGE: {"hints": 500},
+	COINS_STARTER: {"coins": 1000, "hints": 50},
+	COINS_MEGA: {"coins": 10000, "hints": 200},
+}
 
-func request_purchase(product_id: String) -> void:
-    if not PRODUCT_IDS.has(product_id):
-        return
-    purchase_requested.emit(product_id)
+static func all_ids() -> Array:
+	var ids: Array = []
+	ids.append_array(SUBSCRIPTION_IDS)
+	ids.append_array(CONSUMABLE_IDS)
+	return ids
 
-func request_rewarded(reward_type: String) -> void:
-    rewarded_requested.emit(reward_type)
+static func is_subscription(product_id: String) -> bool:
+	return SUBSCRIPTION_IDS.has(product_id)
 
-func deliver_verified_purchase(save: SaveData, product_id: String) -> void:
-    match product_id:
-        "hint_pack_small": save.add_hints(5)
-        "hint_pack_large": save.add_hints(15)
-        "coin_pack_starter":
-            save.add_coins(500)
-            save.add_hints(5)
-        "mega_pack":
-            save.add_coins(2000)
-            save.add_hints(20)
-            save.set_remove_ads("weekend", 48 * 60 * 60)
-        "remove_ads_day": save.set_remove_ads("day", 24 * 60 * 60)
-        "remove_ads_weekend": save.set_remove_ads("weekend", 48 * 60 * 60)
-        "remove_ads_month": save.set_remove_ads("month", 30 * 24 * 60 * 60)
+static func is_consumable(product_id: String) -> bool:
+	return CONSUMABLE_IDS.has(product_id) or LEGACY_PASS_SECONDS.has(product_id)
 
-func deliver_verified_reward(save: SaveData, reward_type: String) -> void:
-    match reward_type:
-        "coins": save.add_coins(50)
-        "extra_moves": pass
-        "hint": save.add_hints(1)
-        "life": save.add_life()
+static func is_known(product_id: String) -> bool:
+	return is_subscription(product_id) or is_consumable(product_id)
+
+# Gives the player what a consumable pack contains. Subscriptions are not
+# delivered here: their entitlement is read from Google Play on every launch.
+static func deliver(save: SaveData, product_id: String) -> void:
+	if save == null:
+		return
+	if LEGACY_PASS_SECONDS.has(product_id):
+		save.set_remove_ads(product_id, int(LEGACY_PASS_SECONDS[product_id]))
+		return
+	if not GRANTS.has(product_id):
+		return
+	var grant: Dictionary = GRANTS[product_id]
+	if grant.has("coins"):
+		save.add_coins(int(grant["coins"]))
+	if grant.has("hints"):
+		save.add_hints(int(grant["hints"]))
+
+# Short text for a pack's contents, e.g. "10,000 coins + 200 hints".
+static func describe(product_id: String) -> String:
+	if not GRANTS.has(product_id):
+		return ""
+	var grant: Dictionary = GRANTS[product_id]
+	var parts: Array = []
+	if grant.has("coins"):
+		parts.append("%s coins" % group_digits(int(grant["coins"])))
+	if grant.has("hints"):
+		parts.append("%s hints" % group_digits(int(grant["hints"])))
+	return " + ".join(parts)
+
+static func group_digits(n: int) -> String:
+	var s := str(n)
+	var out := ""
+	var count := 0
+	for i in range(s.length() - 1, -1, -1):
+		out = s[i] + out
+		count += 1
+		if count % 3 == 0 and i > 0:
+			out = "," + out
+	return out

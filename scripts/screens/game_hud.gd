@@ -28,6 +28,8 @@ var _banner: Label
 var _banner_sub: Label
 var _banner_tween: Tween
 var _action_buttons: Array = []
+var _bar_m: MarginContainer
+var _cost_labels: Dictionary = {}
 
 func setup() -> void:
 	Ui.full_rect(self)
@@ -142,6 +144,7 @@ func setup() -> void:
 	bar_m.add_theme_constant_override("margin_right", 24)
 	bar_m.add_theme_constant_override("margin_bottom", 30 + int(Ui.inset_bottom))
 	bar_m.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bar_m = bar_m
 	add_child(bar_m)
 	var bar := PanelContainer.new()
 	bar.size_flags_vertical = Control.SIZE_SHRINK_END
@@ -150,10 +153,10 @@ func setup() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	bar.add_child(row)
-	row.add_child(_action("bulb", "HINT", "40", Color("#ffe14d"), _emit_hint, true))
-	row.add_child(_action("moves", "+%d MOVES" % ProductionConfig.REWARD_EXTRA_MOVES, "30", Ui.PINK, _emit_moves))
-	row.add_child(_action("tube", "+TUBE", "100", Ui.BLUE, _emit_tube))
-	row.add_child(_action("diamond", "+CRYSTAL", "60", Ui.GREEN, _emit_crystal))
+	row.add_child(_action("bulb", "HINT", "70", Color("#ffe14d"), _emit_hint, true, "hint"))
+	row.add_child(_action("moves", "+%d MOVES" % ProductionConfig.REWARD_EXTRA_MOVES, "50", Ui.PINK, _emit_moves, false, "moves"))
+	row.add_child(_action("tube", "+TUBE", "160", Ui.BLUE, _emit_tube, false, "tube"))
+	row.add_child(_action("diamond", "+CRYSTAL", "100", Ui.GREEN, _emit_crystal, false, "crystal"))
 
 func _emit_pause() -> void:
 	pause_pressed.emit()
@@ -173,7 +176,7 @@ func _emit_crystal() -> void:
 func _emit_poked() -> void:
 	avatar_poked.emit()
 
-func _action(icon_name: String, text: String, cost: String, accent: Color, action: Callable, with_badge: bool = false) -> Control:
+func _action(icon_name: String, text: String, cost: String, accent: Color, action: Callable, with_badge: bool = false, kind: String = "") -> Control:
 	var b := Button.new()
 	b.custom_minimum_size = Vector2(0, 176)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -194,7 +197,10 @@ func _action(icon_name: String, text: String, cost: String, accent: Color, actio
 	cr.alignment = BoxContainer.ALIGNMENT_CENTER
 	cr.add_theme_constant_override("separation", 5)
 	cr.add_child(Ui.icon("coin", 24, Ui.GOLD))
-	cr.add_child(Ui.label(cost, 24, Ui.GOLD, HORIZONTAL_ALIGNMENT_CENTER, true))
+	var cost_label := Ui.label(cost, 24, Ui.GOLD, HORIZONTAL_ALIGNMENT_CENTER, true)
+	if kind != "":
+		_cost_labels[kind] = cost_label
+	cr.add_child(cost_label)
 	cr.add_child(Ui.label("or", 21, Ui.TEXT_DIM))
 	cr.add_child(Ui.icon("video", 25, Color(0.9, 0.5, 1.0)))
 	v.add_child(cr)
@@ -216,6 +222,19 @@ func _action(icon_name: String, text: String, cost: String, accent: Color, actio
 	b.pressed.connect(action)
 	_action_buttons.append(b)
 	return b
+
+# Live coin prices (they rise gently with the level): {hint, moves, tube, crystal}.
+func set_costs(costs: Dictionary) -> void:
+	for key in costs.keys():
+		if _cost_labels.has(key):
+			(_cost_labels[key] as Label).text = str(costs[key])
+
+# Lifts the booster bar above the sticky banner ad.
+func set_bottom_reserve(px: int) -> void:
+	if _bar_m == null:
+		return
+	_bar_m.offset_top = -260 - px
+	_bar_m.offset_bottom = -px
 
 # Disables the booster bar while a hint is playing or a popup is open.
 func set_boosters_enabled(value: bool) -> void:

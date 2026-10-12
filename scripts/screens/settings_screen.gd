@@ -10,10 +10,10 @@ signal auto_camera_toggled(value: bool)
 signal restore_pressed
 signal reset_pressed
 signal privacy_pressed
-signal diagnostics_requested
+signal notifications_toggled(value: bool)
+signal manage_subscription_pressed
 
 var save: SaveData
-var _version_taps := 0
 
 func setup(save_data: SaveData) -> void:
 	save = save_data
@@ -47,27 +47,21 @@ func setup(save_data: SaveData) -> void:
 
 	list.add_child(Ui.section_title("Gameplay"))
 	list.add_child(_toggle("camera", "Auto Camera", bool(save.data.auto_camera), func(v): auto_camera_toggled.emit(v)))
+	list.add_child(_toggle("clock", "Reminders", bool(save.data.notifications), func(v): notifications_toggled.emit(v)))
 
 	list.add_child(Ui.section_title("Account"))
 	list.add_child(_nav("restore", "Restore Purchases", Ui.TEXT, func(): restore_pressed.emit()))
+	list.add_child(_nav("ad_free", "Manage Subscription", Ui.TEXT, func(): manage_subscription_pressed.emit()))
 	if ProductionConfig.PRIVACY_POLICY_URL != "":
 		list.add_child(_nav("check", "Privacy Policy", Ui.TEXT, func(): privacy_pressed.emit()))
 	list.add_child(_nav("trash", "Reset Progress", Ui.RED, func(): reset_pressed.emit()))
 
 	list.add_child(Ui.section_title("About"))
-	var version_row := _info("Version", ProductionConfig.VERSION_NAME)
-	Ui.make_tappable(version_row, 28, _on_version_tapped)
-	list.add_child(version_row)
+	list.add_child(_info("Version", ProductionConfig.VERSION_NAME))
 	list.add_child(_info("Developer", "chAs"))
 	list.add_child(_info("Package", ProductionConfig.PACKAGE_NAME))
 	list.add_child(Ui.vspace(40))
 	Ui.scroll_friendly(list)
-
-func _on_version_tapped() -> void:
-	_version_taps += 1
-	if _version_taps >= 7:
-		_version_taps = 0
-		diagnostics_requested.emit()
 
 func _row_card() -> PanelContainer:
 	var card := PanelContainer.new()

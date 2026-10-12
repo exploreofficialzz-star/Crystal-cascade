@@ -32,14 +32,17 @@ static func height_for(cap: int) -> float:
 static func slot_y(cap: int, j: int) -> float:
 	return -height_for(cap) * 0.5 + 0.65 + float(j) * 0.82
 
-func setup(index: int, cap: int) -> void:
+func setup(index: int, cap: int, look: Dictionary = {}) -> void:
 	tube_index = index
 	capacity = cap
 	var height: float = height_for(capacity)
+	var style: int = int(look.get("tube_style", 0))
+	var glass_tint: Color = look.get("glass_tint", Color(0.45, 0.72, 1.0))
+	var rim_tint: Color = look.get("rim_tint", Color(0.55, 0.78, 1.0))
 
 	var glass_mat := StandardMaterial3D.new()
 	glass_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	glass_mat.albedo_color = Color(0.45, 0.72, 1.0, 0.16)
+	glass_mat.albedo_color = Color(glass_tint.r, glass_tint.g, glass_tint.b, 0.16)
 	glass_mat.metallic = 0.15
 	glass_mat.roughness = 0.04
 	glass_mat.emission_enabled = true
@@ -49,8 +52,24 @@ func setup(index: int, cap: int) -> void:
 	var cylinder := CylinderMesh.new()
 	cylinder.top_radius = 0.68
 	cylinder.bottom_radius = 0.78
-	cylinder.height = height
 	cylinder.radial_segments = 40
+	# Cosmetic tube shapes (crystals always fit: the inner width never shrinks).
+	match style:
+		1:
+			cylinder.top_radius = 0.68
+			cylinder.bottom_radius = 0.90
+		2:
+			cylinder.top_radius = 0.86
+			cylinder.bottom_radius = 0.78
+		3:
+			cylinder.top_radius = 0.78
+			cylinder.bottom_radius = 0.86
+			cylinder.radial_segments = 6
+		4:
+			cylinder.top_radius = 0.76
+			cylinder.bottom_radius = 0.82
+			cylinder.radial_segments = 12
+	cylinder.height = height
 	glass.mesh = cylinder
 	glass.material_override = glass_mat
 	# The glass wall must not cast a shadow, otherwise it darkens the crystals
@@ -60,7 +79,7 @@ func setup(index: int, cap: int) -> void:
 
 	_rim_mat = StandardMaterial3D.new()
 	_rim_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_rim_mat.albedo_color = Color(0.55, 0.78, 1.0, 0.55)
+	_rim_mat.albedo_color = Color(rim_tint.r, rim_tint.g, rim_tint.b, 0.55)
 	_rim_mat.metallic = 0.15
 	_rim_mat.roughness = 0.1
 	_rim_mat.emission_enabled = true
@@ -69,8 +88,8 @@ func setup(index: int, cap: int) -> void:
 
 	rim = MeshInstance3D.new()
 	var torus := TorusMesh.new()
-	torus.inner_radius = 0.60
-	torus.outer_radius = 0.75
+	torus.inner_radius = 0.60 + (cylinder.top_radius - 0.68) * 0.9
+	torus.outer_radius = 0.75 + (cylinder.top_radius - 0.68) * 0.9
 	torus.rings = 32
 	torus.ring_segments = 12
 	rim.mesh = torus

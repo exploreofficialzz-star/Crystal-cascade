@@ -6,6 +6,7 @@ signal back_pressed
 signal claim_login_pressed
 signal claim_quest_pressed(id: String)
 signal claim_milestone_pressed(stars: int)
+signal gift_pick_pressed
 
 var save: SaveData
 var _scroll: ScrollContainer
@@ -49,6 +50,7 @@ func setup(save_data: SaveData) -> void:
 	list.add_child(head)
 
 	_login_card(list)
+	_gift_card(list)
 	list.add_child(Ui.section_title("Daily Quests  ·  resets in %s" % Ui.format_duration(save.seconds_to_next_day())))
 	for q in Rewards.quests_for(save.today()):
 		list.add_child(_quest_card(q))
@@ -73,6 +75,31 @@ func get_scroll() -> int:
 func set_scroll(v: int) -> void:
 	if _scroll != null:
 		_scroll.scroll_vertical = v
+
+func _gift_card(list: VBoxContainer) -> void:
+	var free := save.pick_available()
+	var accent := Color("#ff7ad9")
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", Ui.flat(Color(accent, 0.13), 34, Color(accent, 0.6), 2, 24, 20))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 20)
+	card.add_child(row)
+	row.add_child(Ui.icon("gift", 84, accent))
+	var text := VBoxContainer.new()
+	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	text.add_child(Ui.label("Daily Gift", 38, Ui.TEXT, HORIZONTAL_ALIGNMENT_LEFT, true))
+	var sub := Ui.label("Pick 1 of 3 sealed gifts. Free today!" if free else "Watch a video to open another gift", 26, Ui.TEXT_DIM, HORIZONTAL_ALIGNMENT_LEFT)
+	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.add_child(sub)
+	row.add_child(text)
+	var chev := Ui.icon("chevron_right", 44, accent)
+	chev.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(chev)
+	Ui.ignore_mouse(row)
+	Ui.make_tappable(card, 34, func(): gift_pick_pressed.emit())
+	list.add_child(card)
 
 func _login_card(list: VBoxContainer) -> void:
 	var card := Ui.card(Color(0.35, 0.20, 0.08, 0.40), Color(Ui.GOLD, 0.55), 34, 26)

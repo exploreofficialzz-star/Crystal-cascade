@@ -8,6 +8,8 @@ signal tapped(crystal: Crystal3D)
 # ~85 lights on late levels). The GL Compatibility renderer only handles a
 # handful of lights per object, so that was both slow and a stability risk.
 static var _mesh_cache: Dictionary = {}
+# Cosmetic crystal cut for the current level (see LookBook): 0 prism, 1 gem, 2 shard, 3 cube.
+static var cut_style := 0
 static var _mat_cache: Dictionary = {}
 static var _sel_mat_cache: Dictionary = {}
 static var _pick_shape: SphereShape3D = null
@@ -59,15 +61,42 @@ static func _selected_material_for(color_name: String) -> StandardMaterial3D:
 	_sel_mat_cache[color_name] = m
 	return m
 
-static func _mesh_for(color_name: String) -> PrismMesh:
-	if _mesh_cache.has(color_name):
-		return _mesh_cache[color_name]
-	var crystal := PrismMesh.new()
-	crystal.size = Vector3(0.82, 0.96, 0.82)
-	crystal.left_to_right = 0.62
-	crystal.material = _material_for(color_name)
-	_mesh_cache[color_name] = crystal
-	return crystal
+static func _mesh_for(color_name: String) -> Mesh:
+	var key := "%d_%s" % [cut_style, color_name]
+	if _mesh_cache.has(key):
+		return _mesh_cache[key]
+	var made: Mesh
+	match cut_style:
+		1:
+			# gem: a faceted double cone
+			var gem := CylinderMesh.new()
+			gem.top_radius = 0.0
+			gem.bottom_radius = 0.46
+			gem.height = 0.96
+			gem.radial_segments = 6
+			gem.material = _material_for(color_name)
+			made = gem
+		2:
+			# shard: a tall, slim prism
+			var shard := PrismMesh.new()
+			shard.size = Vector3(0.62, 1.12, 0.62)
+			shard.left_to_right = 0.5
+			shard.material = _material_for(color_name)
+			made = shard
+		3:
+			# cube: a small cut block
+			var cube := BoxMesh.new()
+			cube.size = Vector3(0.70, 0.74, 0.70)
+			cube.material = _material_for(color_name)
+			made = cube
+		_:
+			var crystal := PrismMesh.new()
+			crystal.size = Vector3(0.82, 0.96, 0.82)
+			crystal.left_to_right = 0.62
+			crystal.material = _material_for(color_name)
+			made = crystal
+	_mesh_cache[key] = made
+	return made
 
 # Shadow crystal: colour hidden until it reaches the top of its tube.
 static func _mystery_material() -> StandardMaterial3D:
