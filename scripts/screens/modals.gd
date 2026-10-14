@@ -276,6 +276,39 @@ static func twist_intro(parent: Control, title: String, text: String, accent: Co
 	box.add_child(ok)
 	return ov
 
+# Colour chips of the +CRYSTAL picker (kept as plain functions, no lambdas).
+static func _style_chips(chips: Array, state: Dictionary, name_label: Label) -> void:
+	for c in chips:
+		var cd: Dictionary = c
+		var picked: bool = int(cd["idx"]) == int(state["sel"])
+		var col: Color = cd["color"]
+		if not bool(cd["enabled"]):
+			col = Color(col.r, col.g, col.b, 0.28)
+		var panel: PanelContainer = cd["panel"]
+		var ring := Color(1, 1, 1, 0.25)
+		var ring_w := 2
+		if picked:
+			ring = Color.WHITE
+			ring_w = 6
+			name_label.text = str(cd["name"])
+		panel.add_theme_stylebox_override("panel", Ui.flat(col, 52, ring, ring_w, 0, 0))
+
+static func _choose_chip(idx: int, chips: Array, state: Dictionary, name_label: Label) -> void:
+	state["sel"] = idx
+	_style_chips(chips, state, name_label)
+
+static func _crystal_done(ov: Control, state: Dictionary, handler: Callable) -> void:
+	if is_instance_valid(ov):
+		ov.queue_free()
+	if handler.is_valid():
+		handler.call(int(state["sel"]))
+
+static func _pick_done(ov: Control, idx: int, handler: Callable) -> void:
+	if is_instance_valid(ov):
+		ov.queue_free()
+	if handler.is_valid():
+		handler.call(idx)
+
 # +CRYSTAL: pick which colour to conjure (only colours on the board are offered).
 # options: [{"idx": int, "color": Color, "name": String, "enabled": bool}, ...]
 # on_coins / on_watch receive the chosen colour index.
@@ -312,47 +345,25 @@ static func crystal_picker(parent: Control, options: Array, coin_text: String, c
 			state["sel"] = int(o["idx"])
 		chips.append({"panel": chip, "idx": int(o["idx"]), "color": o["color"], "name": str(o["name"]), "enabled": enabled})
 		row.add_child(chip)
-	var refresh := func() -> void:
-		for c in chips:
-			var cd: Dictionary = c
-			var picked: bool = int(cd["idx"]) == int(state["sel"])
-			var col: Color = cd["color"]
-			if not bool(cd["enabled"]):
-				col = Color(col.r, col.g, col.b, 0.28)
-			var panel: PanelContainer = cd["panel"]
-			panel.add_theme_stylebox_override("panel", Ui.flat(col, 52, Color.WHITE if picked else Color(1, 1, 1, 0.25), 6 if picked else 2, 0, 0))
-			if picked:
-				name_label.text = str(cd["name"])
 	for c in chips:
 		var cd: Dictionary = c
 		if bool(cd["enabled"]):
-			var idx: int = int(cd["idx"])
-			var choose := func() -> void:
-				state["sel"] = idx
-				refresh.call()
-			Ui.make_tappable(cd["panel"], 52, choose)
-	refresh.call()
+			Ui.make_tappable(cd["panel"], 52, _choose_chip.bind(int(cd["idx"]), chips, state, name_label))
+	_style_chips(chips, state, name_label)
 	box.add_child(name_label)
 
 	var coins := Ui.pill_button(coin_text, "gold", 128, 38, "coin")
 	coins.disabled = not coin_enabled or int(state["sel"]) < 0
-	var coins_go := func() -> void:
-		if is_instance_valid(ov):
-			ov.queue_free()
-		if on_coins.is_valid():
-			on_coins.call(int(state["sel"]))
-	coins.pressed.connect(coins_go)
+	coins.pressed.connect(_crystal_done.bind(ov, state, on_coins))
 	box.add_child(coins)
 	if not coin_enabled:
 		box.add_child(Ui.label("Not enough coins", 28, Ui.RED))
-	var watch := Ui.pill_button("WATCH VIDEO: +%d CRYSTALS" % per_ad if watch_enabled else "Video not ready", "pink", 128, 38, "video")
+	var watch_text := "Video not ready"
+	if watch_enabled:
+		watch_text = "WATCH VIDEO: +%d CRYSTALS" % per_ad
+	var watch := Ui.pill_button(watch_text, "pink", 128, 38, "video")
 	watch.disabled = not watch_enabled or int(state["sel"]) < 0
-	var watch_go := func() -> void:
-		if is_instance_valid(ov):
-			ov.queue_free()
-		if on_watch.is_valid():
-			on_watch.call(int(state["sel"]))
-	watch.pressed.connect(watch_go)
+	watch.pressed.connect(_crystal_done.bind(ov, state, on_watch))
 	box.add_child(watch)
 	if not coin_enabled:
 		var more := HBoxContainer.new()
@@ -432,13 +443,7 @@ static func gift_pick(parent: Control, free_pick: bool, on_pick: Callable, on_cl
 		ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		v.add_child(ic)
 		v.add_child(Ui.label("TAP", 30, accents[i], HORIZONTAL_ALIGNMENT_CENTER, true))
-		var idx: int = i
-		var pick_go := func() -> void:
-			if is_instance_valid(ov):
-				ov.queue_free()
-			if on_pick.is_valid():
-				on_pick.call(idx)
-		Ui.make_tappable(card, 40, pick_go)
+		Ui.make_tappable(card, 40, _pick_done.bind(ov, i, on_pick))
 		row.add_child(card)
 	var close := Ui.glass_button("Close", Ui.GREY, 108, 34)
 	close.pressed.connect(_wrap(ov, on_close))

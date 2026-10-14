@@ -25,9 +25,14 @@ env:
   # without ads/purchases while you investigate.)
   ENABLE_MONETIZATION_PLUGINS: "true"
   # Local reminder notifications (lives full, daily reward, streak, come-back).
-  # If this plugin ever breaks the build, set "false": the game then ships
-  # without reminders and everything else keeps working.
-  ENABLE_NOTIFICATION_PLUGIN: "true"
+  # Ships OFF until you have confirmed that the game launches on a phone with
+  # this build. Then set it to "true", push, and test again. The game works
+  # fully without it (it simply sends no reminders).
+  ENABLE_NOTIFICATION_PLUGIN: "false"
+  # The two script gates below stop a build whose scripts do not compile (such a
+  # build would close right after the splash screen). Set "true" only if a gate
+  # ever blocks a build for a wrong reason.
+  SKIP_SCRIPT_GATES: "false"
 
 jobs:
   build:
@@ -218,13 +223,37 @@ jobs:
         run: |
           godot --headless --editor --path . --quit-after 10
 
-      - name: GDScript syntax check (non-blocking)
-        continue-on-error: true
+      - name: Script check (fails the build if any script cannot compile)
+        if: env.SKIP_SCRIPT_GATES != 'true'
         run: |
+          set +e
+          FAIL=0
           for f in $(find scripts config -name '*.gd' | sort); do
-            echo "== $f"
-            godot --headless --path . --check-only --script "res://$f"
+            OUT=$(godot --headless --path . --check-only --script "res://$f" 2>&1)
+            if echo "$OUT" | grep -E -q "Parse Error|Compile Error"; then
+              echo "::error file=$f::This script does not compile"
+              echo "$OUT" | grep -E -B1 -A3 "Parse Error|Compile Error" | head -30
+              FAIL=1
+            fi
           done
+          exit $FAIL
+
+      - name: Boot test (runs the game headless, fails the build if it cannot start)
+        if: env.SKIP_SCRIPT_GATES != 'true'
+        run: |
+          set +e
+          timeout 240 godot --headless --path . --fixed-fps 30 --quit-after 450 > /tmp/boot.log 2>&1
+          echo "godot exit code: $?"
+          if grep -E -q "Parse Error|Compile Error" /tmp/boot.log; then
+            echo "::error::The game cannot start because a script has an error"
+            grep -E -B2 -A4 "Parse Error|Compile Error" /tmp/boot.log | head -80
+            exit 1
+          fi
+          if grep -q "SCRIPT ERROR" /tmp/boot.log; then
+            echo "::warning::Runtime script errors were logged during the headless boot"
+            grep -B1 -A4 "SCRIPT ERROR" /tmp/boot.log | head -100
+          fi
+          echo "Boot test finished without compile errors"
 
       - name: Decode release keystore
         if: github.event_name != 'pull_request'

@@ -11,6 +11,7 @@ signal restore_pressed
 signal reset_pressed
 signal privacy_pressed
 signal notifications_toggled(value: bool)
+signal lite_toggled(value: bool)
 signal manage_subscription_pressed
 
 var save: SaveData
@@ -48,6 +49,7 @@ func setup(save_data: SaveData) -> void:
 	list.add_child(Ui.section_title("Gameplay"))
 	list.add_child(_toggle("camera", "Auto Camera", bool(save.data.auto_camera), func(v): auto_camera_toggled.emit(v)))
 	list.add_child(_toggle("clock", "Reminders", bool(save.data.notifications), func(v): notifications_toggled.emit(v)))
+	list.add_child(_toggle("gear", "Lite Graphics (restart)", bool(save.data.lite_mode), func(v): lite_toggled.emit(v)))
 
 	list.add_child(Ui.section_title("Account"))
 	list.add_child(_nav("restore", "Restore Purchases", Ui.TEXT, func(): restore_pressed.emit()))

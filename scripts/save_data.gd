@@ -51,6 +51,7 @@ static func _default_data() -> Dictionary:
 		"ao_day": -1,
 		"ao_count": 0,
 		"notifications": true,
+		"lite_mode": false,
 		"notif_asked": false,
 		"last_played_day": -1,
 		"comeback_day": -1,

@@ -9,6 +9,7 @@ extends Control
 signal poked
 
 const VIEW := Vector2i(440, 608)
+const LITE_VIEW := Vector2i(300, 414)
 const SHOW_SIZE := Vector2(420, 580)
 
 var guardian: Guardian3D
@@ -40,11 +41,20 @@ func _ready() -> void:
 	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(glow)
 
+	# The live 3D avatar can be switched off completely (start-up guard) and is
+	# cheaper on weak phones: a smaller picture, refreshed about 10 times a second.
+	if DeviceProfile.avatar_off():
+		return
+	var lite := DeviceProfile.is_lite()
 	_viewport = SubViewport.new()
-	_viewport.size = VIEW
+	if lite:
+		_viewport.size = LITE_VIEW
+		_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	else:
+		_viewport.size = VIEW
+		_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	_viewport.transparent_bg = true
 	_viewport.own_world_3d = true
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	_viewport.gui_disable_input = true
 	add_child(_viewport)
 
@@ -67,12 +77,13 @@ func _ready() -> void:
 	fill.light_energy = 2.4
 	fill.omni_range = 8.0
 	_viewport.add_child(fill)
-	var back := OmniLight3D.new()
-	back.position = Vector3(1.8, 1.6, -1.4)
-	back.light_color = Color("#c36bff")
-	back.light_energy = 2.2
-	back.omni_range = 7.0
-	_viewport.add_child(back)
+	if not lite:
+		var back := OmniLight3D.new()
+		back.position = Vector3(1.8, 1.6, -1.4)
+		back.light_color = Color("#c36bff")
+		back.light_energy = 2.2
+		back.omni_range = 7.0
+		_viewport.add_child(back)
 
 	# glowing rune disc she stands on
 	var disc_mesh := CylinderMesh.new()
@@ -124,6 +135,17 @@ func _ready() -> void:
 	zone.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	zone.pressed.connect(_on_poked)
 	add_child(zone)
+
+	if lite:
+		var tick := Timer.new()
+		tick.wait_time = 0.1
+		tick.autostart = true
+		tick.timeout.connect(_refresh_once)
+		add_child(tick)
+
+func _refresh_once() -> void:
+	if _viewport != null:
+		_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 func _on_poked() -> void:
 	poked.emit()

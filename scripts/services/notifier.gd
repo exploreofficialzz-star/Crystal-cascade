@@ -29,13 +29,25 @@ const DAY := 86400
 var save: SaveData
 var scheduler: Node = null
 var _ready_to_schedule := false
+var _setup_started := false
+var _want_permission := false
 
 func setup(save_data: SaveData) -> void:
+	# Only remembers the save here. The plugin itself starts later, the first
+	# time it is really needed (see ensure_setup), never during launch.
 	save = save_data
+
+# True when the reminder plugin is part of this build. Starts nothing.
+func is_available() -> bool:
 	if OS.get_name() != "Android":
+		return false
+	return _class_path("NotificationScheduler") != "" and _has_singleton_like("notification")
+
+# Starts the plugin on first use. Safe to call any number of times.
+func ensure_setup() -> void:
+	if _setup_started or not is_available() or BootGuard.blocked("notify_init"):
 		return
-	if _class_path("NotificationScheduler") == "" or not _has_singleton_like("notification"):
-		return
+	_setup_started = true
 	var instance = _new_global("NotificationScheduler")
 	if not (instance is Node):
 		return
@@ -43,17 +55,19 @@ func setup(save_data: SaveData) -> void:
 	add_child(scheduler)
 	if scheduler.has_signal("initialization_completed"):
 		scheduler.connect("initialization_completed", _on_initialized)
+	BootGuard.mark("notify_init")
 	if scheduler.has_method("initialize"):
 		scheduler.call("initialize")
 	else:
 		_on_initialized()
 
-func is_available() -> bool:
-	return scheduler != null
-
 func _on_initialized(_a = null, _b = null) -> void:
+	BootGuard.settle()
 	_ready_to_schedule = true
 	_create_channel()
+	if _want_permission:
+		_want_permission = false
+		_ask_permission()
 
 func _create_channel() -> void:
 	if scheduler == null or not scheduler.has_method("create_notification_channel"):
@@ -76,6 +90,15 @@ func has_permission() -> bool:
 
 # Shows the system permission dialog (Android 13+) if it has not been granted.
 func request_permission() -> void:
+	if not is_available():
+		return
+	if scheduler == null or not _ready_to_schedule:
+		_want_permission = true
+		ensure_setup()
+		return
+	_ask_permission()
+
+func _ask_permission() -> void:
 	if scheduler != null and not has_permission() and scheduler.has_method("request_post_notifications_permission"):
 		scheduler.call("request_post_notifications_permission")
 

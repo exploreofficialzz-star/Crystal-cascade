@@ -64,6 +64,4 @@ static func for_level(level: int, theme: int) -> Dictionary:
 static func shift_hue(c: Color, amount: float) -> Color:
 	if is_zero_approx(amount):
 		return c
-	var out := c
-	out.h = fposmod(c.h + amount, 1.0)
-	return out
+	return Color.from_hsv(fposmod(c.h + amount, 1.0), c.s, c.v, c.a)

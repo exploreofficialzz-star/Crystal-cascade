@@ -105,24 +105,34 @@ var _crystal_pick := -1
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_PAUSED:
 		_paused_msec = Time.get_ticks_msec()
+		if platform == null or not platform.is_showing_overlay():
+			BootGuard.clean_exit()
 		if save:
 			save.save()
 		_schedule_reminders()
 	elif what == NOTIFICATION_APPLICATION_RESUMED:
+		BootGuard.mark("run" if _world_ready else "boot")
 		if save:
 			save.refresh_lives()
 		_on_app_resumed()
+	elif what == NOTIFICATION_WM_CLOSE_REQUEST:
+		BootGuard.clean_exit()
 	elif what == NOTIFICATION_WM_GO_BACK_REQUEST:
 		_handle_back()
 
 # ── Launch sequence ───────────────────────────────────────────────────────────
 
 func _ready() -> void:
+	BootGuard.begin()
 	_boot_msec = Time.get_ticks_msec()
 	_compute_insets()
 	save = SaveData.new()
 	add_child(save)
 	_away_days = save.begin_session()
+	# Weak phone, the player's Lite switch, or a crash on the last launch: lighter mode.
+	DeviceProfile.configure(bool(save.data.lite_mode) or BootGuard.strikes("lite") > 0, BootGuard.strikes("level_start") >= 2)
+	if DeviceProfile.is_lite():
+		Engine.max_fps = 30
 	audio = AudioManager.new()
 	add_child(audio)
 	audio.enabled = bool(save.data.sound)
@@ -133,6 +143,7 @@ func _ready() -> void:
 	# The home screen is built right here, before the first frame: the engine's
 	# boot splash is the only splash and it hands over straight to the menu.
 	show_home()
+	BootGuard.mark("home")
 	await get_tree().process_frame
 	await _boot_background()
 
@@ -177,24 +188,46 @@ func _boot_background() -> void:
 		if i % 6 == 5:
 			await get_tree().process_frame
 	await get_tree().process_frame
+	BootGuard.mark("assets")
 	world = GameWorld.new()
 	add_child(world)
 	world.build()
 	world.set_active(false)
 	world.set_auto_camera(bool(save.data.auto_camera))
-	platform.setup(save)
+	BootGuard.mark("world")
 	_notifier = Notifier.new()
 	add_child(_notifier)
 	_notifier.setup(save)
 	await get_tree().process_frame
-	await _warm_up()
+	# The warm-up draws a whole board once. Weak phones (and phones that died
+	# there before) skip it and compile shaders when the first level starts.
+	if not (DeviceProfile.is_lite() or BootGuard.blocked("warmup")):
+		BootGuard.mark("warmup")
+		await _warm_up()
 	audio.load_music()
 	audio.set_music(bool(save.data.music))
 	_world_ready = true
+	BootGuard.mark("core")
 	audio.play_voice("hello")
 	await get_tree().create_timer(0.4).timeout
 	_launch_popups()
-	_try_start_app_open()
+	_start_plugins_later()
+
+# Ads, billing and reminders start a few seconds after the menu is up, one after
+# the other, so a weak phone is never asked to do everything at once. A feature
+# that took the game down on the previous launch is skipped for a while.
+func _start_plugins_later() -> void:
+	var gap := 3.0
+	if DeviceProfile.is_lite():
+		gap = 6.0
+	await get_tree().create_timer(gap).timeout
+	platform.setup(save)
+	await get_tree().create_timer(gap).timeout
+	var wants_reminders: bool = bool(save.data.notif_asked) and bool(save.data.notifications)
+	if wants_reminders and not BootGuard.blocked("notify_init"):
+		_notifier.ensure_setup()
+	await get_tree().create_timer(15.0).timeout
+	BootGuard.stable()
 
 # Draws one real board (with gold and shadow crystals and two rows of tubes) and
 # one avatar frame so every shader is compiled before the first level (otherwise
@@ -279,7 +312,7 @@ func _attach(s: Control) -> void:
 	screen = s
 	_apply_banner_reserve()
 	# setup() runs right after attach: apply the banner space again once the screen is built.
-	_apply_banner_reserve.call_deferred()
+	call_deferred("_apply_banner_reserve")
 
 func _apply_banner_reserve() -> void:
 	if screen != null and screen.has_method("set_bottom_reserve"):
@@ -335,7 +368,7 @@ func _comeback_double() -> void:
 func _try_start_app_open() -> void:
 	if not _start_open_pending or current_screen != UiScreen.HOME:
 		return
-	if Time.get_ticks_msec() - _boot_msec > 25000:
+	if Time.get_ticks_msec() - _boot_msec > 60000:
 		_start_open_pending = false
 		return
 	if platform.try_app_open():
@@ -699,6 +732,7 @@ func show_settings() -> void:
 	s.reset_pressed.connect(_confirm_reset)
 	s.privacy_pressed.connect(_open_privacy)
 	s.notifications_toggled.connect(_set_notifications)
+	s.lite_toggled.connect(_set_lite)
 	s.manage_subscription_pressed.connect(platform.open_manage_subscription)
 
 func _set_sound(v: bool) -> void:
@@ -723,6 +757,11 @@ func _set_auto_camera(v: bool) -> void:
 	save.set_setting("auto_camera", v)
 	if world != null:
 		world.set_auto_camera(v)
+
+# "Lite graphics": takes full effect the next time the game starts.
+func _set_lite(v: bool) -> void:
+	save.set_setting("lite_mode", v)
+	_toast("Lite graphics on. Restart the game to apply." if v else "Lite graphics off. Restart the game to apply.")
 
 func _set_notifications(v: bool) -> void:
 	save.set_setting("notifications", v)
@@ -778,6 +817,7 @@ func _handle_back() -> void:
 		UiScreen.HOME:
 			var now := Time.get_ticks_msec()
 			if now < _back_armed_until_ms:
+				BootGuard.clean_exit()
 				get_tree().quit()
 			else:
 				_back_armed_until_ms = now + 2000
@@ -905,6 +945,7 @@ func start_level(id: int) -> void:
 			await get_tree().process_frame
 		_start_waiting = false
 	_load_level(id)
+	BootGuard.mark("level_start")
 	# a little help after failed tries on the same level
 	var bonus: int = mini(6, save.fail_count(id) * 2)
 	moves = int(level_info["budget"]) + bonus
@@ -941,6 +982,14 @@ func start_level(id: int) -> void:
 		_show_tutorial()
 	else:
 		_intro_twist_later()
+	_confirm_level_started()
+
+# The board and the HUD survived their first frames: starting a level is safe here.
+func _confirm_level_started() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().create_timer(1.0).timeout
+	BootGuard.settle()
 
 # Banner with the level, its theme and twists, plus a line from Cass.
 func _announce_level(bonus: int) -> void:

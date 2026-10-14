@@ -49,6 +49,7 @@ var _loaded_ms: Dictionary = {}
 var _retry_count: Dictionary = {}
 var _loading: Dictionary = {}
 var _banner_wanted := false
+var _stagger_running := false
 var _banner_shown := false
 var _app_open_loaded := false
 var _pending_reward := "coins"
@@ -74,8 +75,14 @@ func setup(save_data: SaveData) -> void:
 	save = save_data
 	if OS.get_name() != "Android":
 		return
-	_setup_admob()
-	_setup_billing()
+	if not BootGuard.blocked("ads_init"):
+		_setup_admob()
+	var gap := 4.0
+	if DeviceProfile.is_lite():
+		gap = 8.0
+	await get_tree().create_timer(gap).timeout
+	if not BootGuard.blocked("billing_init"):
+		_setup_billing()
 
 # Debug builds only; release builds stay silent.
 func _dbg(msg: String) -> void:
@@ -134,10 +141,20 @@ func _remove_ads() -> bool:
 func is_ad_free() -> bool:
 	return _remove_ads()
 
+# True while one of our own full-screen ads or the Play checkout is open (the app
+# is paused then, but that is not a normal exit).
+func is_showing_overlay() -> bool:
+	return _fullscreen_open or _now() - _purchase_flow_ms < 120000
+
 func _now() -> int:
 	return Time.get_ticks_msec()
 
+# A format that took the game down on a previous launch (while loading or showing) stays off.
+func _format_blocked(kind: String) -> bool:
+	return BootGuard.blocked("load_" + kind) or BootGuard.blocked("show_" + kind)
+
 func _mark_loaded(kind: String) -> void:
+	BootGuard.settle()
 	_loading[kind] = false
 	_retry_count[kind] = 0
 	_loaded_ms[kind] = _now()
@@ -179,26 +196,26 @@ func _setup_admob() -> void:
 	add_child(admob)
 	_connect_if_present(admob, "initialization_completed", _on_initialized)
 	_connect_if_present(admob, "banner_ad_loaded", _on_banner_loaded)
-	_connect_if_present(admob, "banner_ad_failed_to_load", func(_i = null, e = null): _handle_load_failed("banner", e))
+	_connect_if_present(admob, "banner_ad_failed_to_load", _on_banner_failed)
 	_connect_if_present(admob, "interstitial_ad_loaded", _on_interstitial_loaded)
-	_connect_if_present(admob, "interstitial_ad_failed_to_load", func(_i = null, e = null): _handle_load_failed("interstitial", e))
+	_connect_if_present(admob, "interstitial_ad_failed_to_load", _on_interstitial_failed)
 	_connect_if_present(admob, "interstitial_ad_showed_full_screen_content", _on_fullscreen_opened)
 	_connect_if_present(admob, "interstitial_ad_dismissed_full_screen_content", _on_interstitial_done)
 	_connect_if_present(admob, "interstitial_ad_failed_to_show_full_screen_content", _on_interstitial_done)
 	_connect_if_present(admob, "rewarded_ad_loaded", _on_rewarded_loaded)
-	_connect_if_present(admob, "rewarded_ad_failed_to_load", func(_i = null, e = null): _handle_load_failed("rewarded", e))
+	_connect_if_present(admob, "rewarded_ad_failed_to_load", _on_rewarded_failed)
 	_connect_if_present(admob, "rewarded_ad_showed_full_screen_content", _on_fullscreen_opened)
 	_connect_if_present(admob, "rewarded_ad_user_earned_reward", _on_rewarded_earned)
-	_connect_if_present(admob, "rewarded_ad_dismissed_full_screen_content", func(_i = null, _e = null): _handle_reward_closed("rewarded"))
-	_connect_if_present(admob, "rewarded_ad_failed_to_show_full_screen_content", func(_i = null, _e = null): _handle_reward_closed("rewarded"))
+	_connect_if_present(admob, "rewarded_ad_dismissed_full_screen_content", _on_rewarded_closed)
+	_connect_if_present(admob, "rewarded_ad_failed_to_show_full_screen_content", _on_rewarded_closed)
 	_connect_if_present(admob, "rewarded_interstitial_ad_loaded", _on_bonus_loaded)
-	_connect_if_present(admob, "rewarded_interstitial_ad_failed_to_load", func(_i = null, e = null): _handle_load_failed("rewarded_interstitial", e))
+	_connect_if_present(admob, "rewarded_interstitial_ad_failed_to_load", _on_bonus_failed)
 	_connect_if_present(admob, "rewarded_interstitial_ad_showed_full_screen_content", _on_fullscreen_opened)
 	_connect_if_present(admob, "rewarded_interstitial_ad_user_earned_reward", _on_rewarded_earned)
-	_connect_if_present(admob, "rewarded_interstitial_ad_dismissed_full_screen_content", func(_i = null, _e = null): _handle_reward_closed("rewarded_interstitial"))
-	_connect_if_present(admob, "rewarded_interstitial_ad_failed_to_show_full_screen_content", func(_i = null, _e = null): _handle_reward_closed("rewarded_interstitial"))
+	_connect_if_present(admob, "rewarded_interstitial_ad_dismissed_full_screen_content", _on_bonus_closed)
+	_connect_if_present(admob, "rewarded_interstitial_ad_failed_to_show_full_screen_content", _on_bonus_closed)
 	_connect_if_present(admob, "app_open_ad_loaded", _on_app_open_loaded)
-	_connect_if_present(admob, "app_open_ad_failed_to_load", func(_i = null, e = null): _handle_load_failed("app_open", e))
+	_connect_if_present(admob, "app_open_ad_failed_to_load", _on_app_open_failed)
 	_connect_if_present(admob, "app_open_ad_showed_full_screen_content", _on_fullscreen_opened)
 	_connect_if_present(admob, "app_open_ad_dismissed_full_screen_content", _on_app_open_done)
 	_connect_if_present(admob, "app_open_ad_failed_to_show_full_screen_content", _on_app_open_done)
@@ -211,6 +228,7 @@ func _setup_admob() -> void:
 
 # User Messaging Platform (GDPR / EEA). Any failure just continues to ads.
 func _start_consent() -> void:
+	BootGuard.mark("ads_init")
 	if not (admob.has_method("update_consent_info") and admob.has_method("get_consent_status")):
 		_init_ads()
 		return
@@ -275,19 +293,48 @@ func _init_ads() -> void:
 	if _ads_started or admob == null:
 		return
 	_ads_started = true
+	BootGuard.mark("ads_init")
 	if admob.has_method("initialize"):
 		admob.call("initialize")
 
 func _on_initialized(_status = null) -> void:
 	initialized = true
+	BootGuard.settle()
 	_dbg("admob initialized (real ads: %s)" % str(ProductionConfig.USE_REAL_ADS))
 	_load_rewarded()
-	_load_bonus()
-	if not _remove_ads():
-		_load_interstitial()
-		_load_app_open()
 	if _banner_wanted:
 		_load_banner()
+	_load_pending_formats()
+
+# Interstitial, bonus-gift and app-open ads are only needed once the player has
+# played a few levels, and they are loaded one after the other, never all at
+# once, so a weak phone is not overloaded right after launch.
+func _progress() -> int:
+	if save == null:
+		return 0
+	return int(save.data.highest_unlocked)
+
+func _lite_extra() -> int:
+	if DeviceProfile.is_lite():
+		return 3
+	return 0
+
+func _load_pending_formats() -> void:
+	if _stagger_running or not initialized:
+		return
+	_stagger_running = true
+	var gap := 2.0
+	if DeviceProfile.is_lite():
+		gap = 4.0
+	if not _remove_ads() and _interstitial_id == "" and _progress() >= ProductionConfig.INTERSTITIAL_MIN_LEVEL - 1 + _lite_extra():
+		_load_interstitial()
+		await get_tree().create_timer(gap).timeout
+	if _bonus_id == "" and _progress() >= ProductionConfig.BONUS_GIFT_MIN_LEVEL - 1 + _lite_extra():
+		_load_bonus()
+		await get_tree().create_timer(gap).timeout
+	if not _remove_ads() and not _app_open_loaded and _progress() >= ProductionConfig.APP_OPEN_MIN_LEVEL - 1 + _lite_extra():
+		_load_app_open()
+	_stagger_running = false
 
 func _request(kind: String, unit_id: String):
 	var method := "create_%s_ad_request" % kind
@@ -333,13 +380,14 @@ func _bottom_position_value(class_path: String, script_obj = null):
 func _load(kind: String, unit_id: String) -> void:
 	if admob == null or not initialized or unit_id == "":
 		return
-	if bool(_loading.get(kind, false)):
+	if bool(_loading.get(kind, false)) or _format_blocked(kind):
 		return
 	var req = _request(kind, unit_id)
 	var method := "load_%s_ad" % kind
 	if req == null or not admob.has_method(method):
 		return
 	_loading[kind] = true
+	BootGuard.mark("load_" + kind)
 	var arg_count := _method_arg_count(admob, method)
 	if arg_count == 0:
 		admob.call(method)
@@ -372,6 +420,7 @@ func _load_app_open() -> void:
 # Failed loads are retried with a growing delay so a bad connection never
 # leaves a slot permanently empty and never hammers the ad server.
 func _handle_load_failed(kind: String, error = null) -> void:
+	BootGuard.settle()
 	_loading[kind] = false
 	var msg := ""
 	if error != null and error is Object and _has_prop(error, "message"):
@@ -381,6 +430,28 @@ func _handle_load_failed(kind: String, error = null) -> void:
 	_retry_count[kind] = n + 1
 	var wait_ms: int = RETRY_MS[mini(n, RETRY_MS.size() - 1)]
 	get_tree().create_timer(float(wait_ms) / 1000.0).timeout.connect(_reload.bind(kind))
+
+# Small named handlers (a signal may carry 0..2 arguments; these accept all of them).
+func _on_banner_failed(_a = null, e = null) -> void:
+	_handle_load_failed("banner", e)
+
+func _on_interstitial_failed(_a = null, e = null) -> void:
+	_handle_load_failed("interstitial", e)
+
+func _on_rewarded_failed(_a = null, e = null) -> void:
+	_handle_load_failed("rewarded", e)
+
+func _on_bonus_failed(_a = null, e = null) -> void:
+	_handle_load_failed("rewarded_interstitial", e)
+
+func _on_app_open_failed(_a = null, e = null) -> void:
+	_handle_load_failed("app_open", e)
+
+func _on_rewarded_closed(_a = null, _b = null) -> void:
+	_handle_reward_closed("rewarded")
+
+func _on_bonus_closed(_a = null, _b = null) -> void:
+	_handle_reward_closed("rewarded_interstitial")
 
 func _reload(kind: String) -> void:
 	match kind:
@@ -412,11 +483,13 @@ func _full_screen_closed() -> void:
 # moving between Levels, Game and Level Complete never flickers or reloads it.
 func show_banner() -> void:
 	_banner_wanted = true
-	if admob == null or _remove_ads():
+	if admob == null or _remove_ads() or BootGuard.blocked("show_banner"):
 		return
 	if _banner_id != "":
 		if not _banner_shown:
+			BootGuard.mark("show_banner")
 			admob.call("show_banner_ad", _banner_id)
+			BootGuard.settle()
 			_banner_shown = true
 		_emit_banner_height()
 	elif initialized:
@@ -434,8 +507,10 @@ func _on_banner_loaded(info, _response = null) -> void:
 	_banner_id = _ad_id_of(info)
 	if _banner_id == "":
 		return
-	if _banner_wanted and not _remove_ads():
+	if _banner_wanted and not _remove_ads() and not BootGuard.blocked("show_banner"):
+		BootGuard.mark("show_banner")
 		admob.call("show_banner_ad", _banner_id)
+		BootGuard.settle()
 		_banner_shown = true
 		_emit_banner_height()
 	else:
@@ -464,11 +539,12 @@ func ads_removed_now() -> void:
 
 func level_finished() -> void:
 	_levels_since_interstitial += 1
+	_load_pending_formats()
 
 # Shows an interstitial if the pacing rules allow it. `on_done` runs when the ad
 # closes (the caller continues by itself when this returns false).
 func try_interstitial(on_done: Callable, level: int = 99) -> bool:
-	if admob == null or not initialized or _remove_ads() or _fullscreen_open:
+	if admob == null or not initialized or _remove_ads() or _fullscreen_open or _format_blocked("interstitial"):
 		return false
 	if level < ProductionConfig.INTERSTITIAL_MIN_LEVEL:
 		return false
@@ -491,6 +567,7 @@ func try_interstitial(on_done: Callable, level: int = 99) -> bool:
 	_fullscreen_open = true
 	var id := _interstitial_id
 	_interstitial_id = ""
+	BootGuard.mark("show_interstitial")
 	admob.call("show_interstitial_ad", id)
 	# If the plugin never reports the ad closing, do not leave the player stuck.
 	get_tree().create_timer(30.0).timeout.connect(_interstitial_timeout)
@@ -498,6 +575,7 @@ func try_interstitial(on_done: Callable, level: int = 99) -> bool:
 
 func _interstitial_timeout() -> void:
 	if _after_interstitial.is_valid():
+		BootGuard.settle()
 		_full_screen_closed()
 		var cb := _after_interstitial
 		_after_interstitial = Callable()
@@ -508,6 +586,7 @@ func _on_interstitial_loaded(info, _response = null) -> void:
 	_interstitial_id = _ad_id_of(info)
 
 func _on_interstitial_done(_info = null, _error = null) -> void:
+	BootGuard.settle()
 	_full_screen_closed()
 	_last_interstitial_ms = _now()
 	_load_interstitial()
@@ -533,6 +612,7 @@ func show_rewarded(reward_type: String) -> bool:
 	_fullscreen_open = true
 	var id := _rewarded_id
 	_rewarded_id = ""
+	BootGuard.mark("show_rewarded")
 	admob.call("show_rewarded_ad", id)
 	return true
 
@@ -547,6 +627,7 @@ func _on_rewarded_earned(_info = null, _reward_data = null) -> void:
 	rewarded_earned.emit(granted)
 
 func _handle_reward_closed(kind: String) -> void:
+	BootGuard.settle()
 	_full_screen_closed()
 	_last_rewarded_end_ms = _now()
 	if kind == "rewarded_interstitial":
@@ -574,6 +655,7 @@ func show_bonus(reward_type: String) -> bool:
 	_fullscreen_open = true
 	var id := _bonus_id
 	_bonus_id = ""
+	BootGuard.mark("show_rewarded_interstitial")
 	admob.call("show_rewarded_interstitial_ad", id)
 	return true
 
@@ -589,6 +671,7 @@ func _on_app_open_loaded(_info = null, _response = null) -> void:
 	app_open_ready.emit()
 
 func _on_app_open_done(_info = null, _error = null) -> void:
+	BootGuard.settle()
 	_full_screen_closed()
 	_app_open_loaded = false
 	_load_app_open()
@@ -601,7 +684,7 @@ func is_app_open_ready() -> bool:
 func try_app_open() -> bool:
 	if admob == null or not initialized or _remove_ads() or save == null:
 		return false
-	if not admob.has_method("show_app_open_ad") or _fullscreen_open:
+	if not admob.has_method("show_app_open_ad") or _fullscreen_open or _format_blocked("app_open"):
 		return false
 	if int(save.data.highest_unlocked) < ProductionConfig.APP_OPEN_MIN_LEVEL:
 		return false
@@ -623,6 +706,7 @@ func try_app_open() -> bool:
 	_last_app_open_ms = now
 	save.app_open_shown()
 	_fullscreen_open = true
+	BootGuard.mark("show_app_open")
 	admob.call("show_app_open_ad")
 	return true
 
@@ -646,6 +730,7 @@ func _setup_billing() -> void:
 	_connect_if_present(billing_client, "query_product_details_response", _on_product_details)
 	_connect_if_present(billing_client, "query_purchases_response", _on_query_purchases)
 	_connect_if_present(billing_client, "on_purchase_updated", _on_purchase_updated)
+	BootGuard.mark("billing_init")
 	billing_client.call("start_connection")
 
 func _product_type(key: String, fallback: int) -> int:
@@ -660,6 +745,7 @@ func _on_billing_disconnected(_a = null) -> void:
 	_billing_ready = false
 
 func _on_billing_error(_code = 0, _message = "") -> void:
+	BootGuard.settle()
 	_billing_ready = false
 	if _restore_pending:
 		_restore_pending = false
@@ -767,6 +853,7 @@ func _on_query_purchases(response: Dictionary) -> void:
 		return
 	if _sync_stage == 2:
 		_sync_stage = 0
+		BootGuard.settle()
 		if ok:
 			for entry in response.get("purchases", []):
 				_process_purchase(entry, false)

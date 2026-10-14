@@ -23,7 +23,7 @@ const COINS_MEGA := "mega_pack"
 const SUBSCRIPTION_IDS := [ADS_MONTHLY, ADS_ANNUAL]
 
 # Base-plan ids to create in Play Console (used if Google does not report them).
-const DEFAULT_BASE_PLANS := {ADS_MONTHLY: "monthly", ADS_ANNUAL: "annual"}
+const DEFAULT_BASE_PLANS := {"ads_free_monthly": "monthly", "ads_free_annual": "annual"}
 const CONSUMABLE_IDS := [HINTS_SMALL, HINTS_LARGE, COINS_STARTER, COINS_MEGA]
 
 # Time-limited ad-free passes that are no longer sold. A pass that was bought
@@ -35,10 +35,10 @@ const LEGACY_PASS_SECONDS := {
 }
 
 const GRANTS := {
-	HINTS_SMALL: {"hints": 100},
-	HINTS_LARGE: {"hints": 500},
-	COINS_STARTER: {"coins": 1000, "hints": 50},
-	COINS_MEGA: {"coins": 10000, "hints": 200},
+	"hint_pack_small": {"hints": 100},
+	"hint_pack_large": {"hints": 500},
+	"coin_pack_starter": {"coins": 1000, "hints": 50},
+	"mega_pack": {"coins": 10000, "hints": 200},
 }
 
 static func all_ids() -> Array:
