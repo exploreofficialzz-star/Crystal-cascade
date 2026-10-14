@@ -33,6 +33,11 @@ env:
   # build would close right after the splash screen). Set "true" only if a gate
   # ever blocks a build for a wrong reason.
   SKIP_SCRIPT_GATES: "false"
+  # Live AdMob ads are in every build (APK and Play bundle). Register your own
+  # phone as a test device in AdMob (Settings > Test devices) so you never tap a
+  # real ad by accident. Set "true" to build the APK with Google's TEST ad units
+  # instead (the Play bundle always uses your live units).
+  TEST_ADS_IN_APK: "false"
 
 jobs:
   build:
@@ -223,6 +228,22 @@ jobs:
         run: |
           godot --headless --editor --path . --quit-after 10
 
+      - name: Use the App open ad unit id (optional repository variable)
+        env:
+          APP_OPEN_ID: ${{ vars.ADMOB_APP_OPEN_ID }}
+        run: |
+          if [ -z "$APP_OPEN_ID" ]; then
+            echo "No ADMOB_APP_OPEN_ID variable set: app-open ads stay off"
+            exit 0
+          fi
+          if ! echo "$APP_OPEN_ID" | grep -Eq '^ca-app-pub-[0-9]{16}/[0-9]{10}$'; then
+            echo "::error::ADMOB_APP_OPEN_ID is not a valid ad unit id (expected ca-app-pub-XXXXXXXXXXXXXXXX/XXXXXXXXXX)"
+            exit 1
+          fi
+          sed -i "s#const ADMOB_APP_OPEN := \"\"#const ADMOB_APP_OPEN := \"$APP_OPEN_ID\"#" config/production.gd
+          grep -q "const ADMOB_APP_OPEN := \"$APP_OPEN_ID\"" config/production.gd
+          echo "App open ad unit enabled"
+
       - name: Script check (fails the build if any script cannot compile)
         if: env.SKIP_SCRIPT_GATES != 'true'
         run: |
@@ -265,7 +286,7 @@ jobs:
           chmod 600 /tmp/crystal-cascade-release.jks
           keytool -list -keystore /tmp/crystal-cascade-release.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -alias "${{ secrets.KEY_ALIAS }}" >/dev/null
 
-      - name: Build signed APK (test ads) and AAB (real ads)
+      - name: Build signed APK and AAB (live ads)
         if: github.event_name != 'pull_request'
         env:
           GODOT_ANDROID_KEYSTORE_RELEASE_PATH: /tmp/crystal-cascade-release.jks
@@ -274,12 +295,13 @@ jobs:
           GODOT_ANDROID_KEYSTORE_RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           mkdir -p build
-          # 1) APK for testing on your own phone: Google TEST ads only, so you
-          #    can tap ads safely (tapping real ads on your own device can get
-          #    the AdMob account suspended).
-          grep -q "const USE_REAL_ADS := false" config/production.gd
+          grep -q "const USE_REAL_ADS := true" config/production.gd
+          # 1) APK: live ads (or Google test ads if TEST_ADS_IN_APK is "true").
+          if [ "$TEST_ADS_IN_APK" = "true" ]; then
+            sed -i 's/const USE_REAL_ADS := true/const USE_REAL_ADS := false/' config/production.gd
+          fi
           godot --headless --path . --install-android-build-template --export-release "Android APK" build/CrystalCascade.apk
-          # 2) AAB for Google Play: switch to your REAL ad units.
+          # 2) AAB for Google Play: always your live ad units.
           sed -i 's/const USE_REAL_ADS := false/const USE_REAL_ADS := true/' config/production.gd
           grep -q "const USE_REAL_ADS := true" config/production.gd
           godot --headless --path . --export-release "Android AAB" build/CrystalCascade.aab
@@ -294,6 +316,24 @@ jobs:
           AAPT2=$(ls "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1 || true)
           if [ -n "$AAPT2" ]; then
             "$AAPT2" dump permissions build/CrystalCascade.apk || true
+          fi
+
+      - name: Check the AdMob app id inside the built app
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          AAPT2=$(ls "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$AAPT2" ]; then
+            echo "aapt2 not found, skipping this check"
+            exit 0
+          fi
+          "$AAPT2" dump xmltree build/CrystalCascade.apk --file AndroidManifest.xml > /tmp/manifest.txt || true
+          if grep -q "ca-app-pub-2492078126313994~1061290053" /tmp/manifest.txt; then
+            echo "OK: the live AdMob app id is inside the app"
+          else
+            echo "::warning::The live AdMob app id was NOT found in the built app. The AdMob plugin may not be enabled for this build."
+            grep -B1 -A2 "APPLICATION_ID" /tmp/manifest.txt || true
           fi
 
       - name: Remove decoded keystore

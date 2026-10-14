@@ -28,7 +28,7 @@ signal banner_height_changed(canvas_px: int)
 signal entitlement_changed
 signal app_open_ready
 
-const RETRY_MS := [5000, 15000, 30000, 60000]
+const RETRY_MS := [5000, 15000, 30000, 60000, 120000, 300000]
 const AD_MAX_AGE_MS := 55 * 60 * 1000
 const APP_OPEN_MAX_AGE_MS := 3 * 60 * 60 * 1000
 

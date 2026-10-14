@@ -6,9 +6,12 @@ const PACKAGE_NAME := "com.chastechgroup.crystalcascade"
 const VERSION_NAME := "2.9.0"
 const VERSION_CODE := 25
 
-# false = Google's public TEST ad units (safe to tap while testing).
-# CI flips this to true automatically for the Play Store bundle (AAB) only.
-const USE_REAL_ADS := false
+# true  = your LIVE AdMob ad units. This is what ships (APK and Play bundle).
+# false = Google's public TEST ad units. Use it only while developing, or build
+#         the APK with test ads through TEST_ADS_IN_APK in the CI workflow.
+# While your own phone is not registered as a test device in AdMob, never tap
+# live ads on it (Settings > Test devices in the AdMob console).
+const USE_REAL_ADS := true
 
 # Google's public TEST ad units. Used whenever USE_REAL_ADS is false.
 const TEST_BANNER := "ca-app-pub-3940256099942544/6300978111"
@@ -23,26 +26,48 @@ const ADMOB_INTERSTITIAL := "ca-app-pub-2492078126313994/4548648504"
 const ADMOB_REWARDED_INTERSTITIAL := "ca-app-pub-2492078126313994/8978848108"
 const ADMOB_REWARDED := "ca-app-pub-2492078126313994/4998635250"
 const ADMOB_NATIVE := "ca-app-pub-2492078126313994/7665766435"
-# Create an "App open" ad unit in AdMob and paste its id here. While this is
-# empty the Play build simply shows no app-open ads (the test APK still does).
+# "App open" ad unit. Create it in AdMob, then either paste its id here or (better)
+# set the repository variable ADMOB_APP_OPEN_ID in GitHub; the build fills this in.
+# While it is empty there are simply no app-open ads in live mode.
 const ADMOB_APP_OPEN := ""
 
 # Store products live in scripts/services/monetization.gd (class Monetization).
 
+# A live ad unit is only used if it is well formed AND belongs to the same
+# AdMob publisher as ADMOB_APP_ID. A typo then gives "no ad" instead of a silent
+# failure, and ids from another account can never slip in.
+static func _live_unit(unit_id: String) -> String:
+	var publisher: String = ADMOB_APP_ID.split("~")[0]
+	var pattern := RegEx.new()
+	pattern.compile("^ca-app-pub-[0-9]{16}/[0-9]{10}$")
+	if pattern.search(unit_id) != null and unit_id.begins_with(publisher + "/"):
+		return unit_id
+	return ""
+
 static func banner_id() -> String:
-	return ADMOB_BANNER if USE_REAL_ADS else TEST_BANNER
+	if USE_REAL_ADS:
+		return _live_unit(ADMOB_BANNER)
+	return TEST_BANNER
 
 static func interstitial_id() -> String:
-	return ADMOB_INTERSTITIAL if USE_REAL_ADS else TEST_INTERSTITIAL
+	if USE_REAL_ADS:
+		return _live_unit(ADMOB_INTERSTITIAL)
+	return TEST_INTERSTITIAL
 
 static func rewarded_id() -> String:
-	return ADMOB_REWARDED if USE_REAL_ADS else TEST_REWARDED
+	if USE_REAL_ADS:
+		return _live_unit(ADMOB_REWARDED)
+	return TEST_REWARDED
 
 static func rewarded_interstitial_id() -> String:
-	return ADMOB_REWARDED_INTERSTITIAL if USE_REAL_ADS else TEST_REWARDED_INTERSTITIAL
+	if USE_REAL_ADS:
+		return _live_unit(ADMOB_REWARDED_INTERSTITIAL)
+	return TEST_REWARDED_INTERSTITIAL
 
 static func app_open_id() -> String:
-	return ADMOB_APP_OPEN if USE_REAL_ADS else TEST_APP_OPEN
+	if USE_REAL_ADS:
+		return _live_unit(ADMOB_APP_OPEN)
+	return TEST_APP_OPEN
 
 # ── Monetisation tuning ──────────────────────────────────────────────────────
 const REWARD_VIDEO_COINS := 30
