@@ -5,6 +5,8 @@ const APP_NAME := "Crystal Cascade"
 const PACKAGE_NAME := "com.chastechgroup.crystalcascade"
 const VERSION_NAME := "2.9.0"
 const VERSION_CODE := 25
+# Stamped by the CI build (run number). A new build forgets old crash strikes.
+const BUILD_ID := "dev"
 
 # true  = your LIVE AdMob ad units. This is what ships (APK and Play bundle).
 # false = Google's public TEST ad units. Use it only while developing, or build

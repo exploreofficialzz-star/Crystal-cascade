@@ -228,6 +228,13 @@ jobs:
         run: |
           godot --headless --editor --path . --quit-after 10
 
+      - name: Stamp the build id
+        run: |
+          STAMP="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          sed -i "s/const BUILD_ID := \"dev\"/const BUILD_ID := \"$STAMP\"/" config/production.gd
+          grep -q "const BUILD_ID := \"$STAMP\"" config/production.gd
+          echo "Build id $STAMP"
+
       - name: Use the App open ad unit id (optional repository variable)
         env:
           APP_OPEN_ID: ${{ vars.ADMOB_APP_OPEN_ID }}
@@ -239,6 +246,10 @@ jobs:
           if ! echo "$APP_OPEN_ID" | grep -Eq '^ca-app-pub-[0-9]{16}/[0-9]{10}$'; then
             echo "::error::ADMOB_APP_OPEN_ID is not a valid ad unit id (expected ca-app-pub-XXXXXXXXXXXXXXXX/XXXXXXXXXX)"
             exit 1
+          fi
+          if ! grep -q 'const ADMOB_APP_OPEN := ""' config/production.gd; then
+            echo "ADMOB_APP_OPEN is already set in config/production.gd, the variable is ignored"
+            exit 0
           fi
           sed -i "s#const ADMOB_APP_OPEN := \"\"#const ADMOB_APP_OPEN := \"$APP_OPEN_ID\"#" config/production.gd
           grep -q "const ADMOB_APP_OPEN := \"$APP_OPEN_ID\"" config/production.gd

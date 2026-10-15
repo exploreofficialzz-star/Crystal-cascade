@@ -208,10 +208,11 @@ func _boot_background() -> void:
 	audio.set_music(bool(save.data.music))
 	_world_ready = true
 	BootGuard.mark("core")
+	# Ads, billing and reminders have their own timer: nothing below can skip them.
+	_start_plugins_later()
 	audio.play_voice("hello")
 	await get_tree().create_timer(0.4).timeout
 	_launch_popups()
-	_start_plugins_later()
 
 # Ads, billing and reminders start a few seconds after the menu is up, one after
 # the other, so a weak phone is never asked to do everything at once. A feature

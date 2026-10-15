@@ -27,6 +27,10 @@ static var _crashed_step := ""
 # First thing at start-up: finds out whether the last run died, and in which step.
 static func begin() -> void:
 	_data = _read()
+	# A new build starts with a clean slate: whatever went wrong in an older build
+	# (or the install itself closing the running game) must never keep a feature off.
+	if str(_data.get("build", "")) != ProductionConfig.BUILD_ID:
+		_data = {"op": "", "strikes": {}, "clean_runs": 0, "build": ProductionConfig.BUILD_ID}
 	var last: String = str(_data.get("op", ""))
 	_crashed_step = last
 	if last != "":
@@ -71,9 +75,14 @@ static func strikes(feature: String) -> int:
 	var table: Dictionary = _strike_table()
 	return int(table.get(feature, 0))
 
-# True when this step took the game down recently and should be left out.
+# True when this step took the game down recently and should be left out. An ad
+# format needs two strikes (leaving the app while an ad is open can look like a
+# crash once); everything else is switched off after the first one.
 static func blocked(step: String) -> bool:
-	return strikes(step) > 0
+	var needed := 1
+	if step.begins_with("load_") or step.begins_with("show_"):
+		needed = 2
+	return strikes(step) >= needed
 
 # ── internals ─────────────────────────────────────────────────────────────────
 
